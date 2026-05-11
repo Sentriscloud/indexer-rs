@@ -72,14 +72,19 @@ docker run -d --name "$PG_CONTAINER" \
 ok "container started"
 
 note "waiting for postgres ready"
-for _ in $(seq 1 30); do
+pg_ok=0
+for _ in $(seq 1 60); do
     if docker exec "$PG_CONTAINER" pg_isready -U indexer -d indexer -q 2>/dev/null; then
-        ok "postgres ready"
+        pg_ok=1
         break
     fi
     sleep 1
 done
-docker exec "$PG_CONTAINER" pg_isready -U indexer -d indexer -q || fail "postgres never came up"
+[[ "$pg_ok" == "1" ]] || fail "postgres never came up in 60s"
+# Tiny settle pause — pg_isready can return ok while the role/db is still
+# being initialised by docker-entrypoint scripts.
+sleep 1
+ok "postgres ready"
 
 # ── 2. Apply migrations ───────────────────────────────────────────────
 note "applying migrations"
@@ -275,4 +280,38 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer smoke-se
 ok "/blocks with correct token -> 200"
 
 echo
-echo "✓ smoke PASSED — every endpoint healthy, auth middleware gates correctly"
+note "verifying observability + readyz (no auth)"
+
+# Restart API once more without bearer token but WITH metrics + readyz active
+kill "$API_PID" 2>/dev/null || true
+wait "$API_PID" 2>/dev/null || true
+DATABASE_URL="$DB_URL" \
+INDEXER_API_BIND="127.0.0.1:${API_PORT}" \
+RUST_LOG="warn" \
+    ./target/release/api &
+API_PID=$!
+for _ in $(seq 1 30); do
+    if curl -fsS "$API_BASE/health" >/dev/null 2>&1; then break; fi
+    sleep 0.5
+done
+curl -fsS "$API_BASE/health" >/dev/null || fail "api never came up after 3rd boot"
+
+# /readyz reports PG ok + cache disabled.
+v=$(curl -fsS "$API_BASE/readyz" | jq -er '.ok')
+[[ "$v" == "true" ]] || fail "/readyz.ok != true (got '$v')"
+v=$(curl -fsS "$API_BASE/readyz" | jq -r '.checks.pg')
+[[ "$v" == "ok" ]] || fail "/readyz.checks.pg != ok (got '$v')"
+v=$(curl -fsS "$API_BASE/readyz" | jq -r '.checks.cache')
+[[ "$v" == "disabled" ]] || fail "/readyz.checks.cache != disabled (got '$v')"
+ok "/readyz (pg ok, cache disabled)"
+
+# /metrics exposes Prometheus-format counters after a few requests
+curl -fsS "$API_BASE/blocks" >/dev/null
+curl -fsS "$API_BASE/blocks" >/dev/null
+metrics=$(curl -fsS "$API_BASE/metrics")
+echo "$metrics" | grep -q '^indexer_api_requests_total{' || fail "/metrics missing indexer_api_requests_total"
+echo "$metrics" | grep -q '^indexer_api_request_seconds_bucket{' || fail "/metrics missing latency histogram"
+ok "/metrics (Prometheus exposition with request counter + latency histogram)"
+
+echo
+echo "✓ smoke PASSED — 23+ endpoints healthy, auth + readyz + metrics all green"

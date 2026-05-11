@@ -10,6 +10,14 @@ authors.workspace = true
 [dependencies]
 indexer-domain = { path = "../domain", version = "0.1.0" }
 indexer-db = { path = "../db", version = "0.1.0" }
+indexer-cache = { path = "../cache", version = "0.1.0" }
+
+# Prometheus metrics export.
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
+
+# Per-IP rate-limit (governor token bucket via tower-governor).
+tower_governor = "0.7"
 
 # HTTP server.
 axum.workspace = true

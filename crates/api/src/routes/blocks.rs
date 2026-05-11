@@ -1,10 +1,10 @@
 //! `/blocks` + `/blocks/:height` — list-newest-first + single block detail
 //! with nested transactions. TS port at `apps/api/src/routes/native.ts`.
 
-use crate::SharedState;
 use crate::error::{ApiError, ApiResult};
 use crate::routes::clamp_limit;
 use crate::serialise::{WireBlock, WireBlockWithTxs, WireTransaction};
+use crate::{CacheTier, SharedState, cached};
 use axum::extract::{Path, Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -18,7 +18,7 @@ struct ListQuery {
     before: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct ListResponse {
     blocks: Vec<WireBlock>,
 }
@@ -34,10 +34,22 @@ async fn list(
             ApiError::InvalidQuery("invalid before: must be a non-negative integer".into())
         })?)),
     };
-    let rows = blocks::list_before(&state.pool, before, limit).await?;
-    Ok(Json(ListResponse {
-        blocks: rows.iter().map(WireBlock::from).collect(),
-    }))
+    // Cache-aside: chain-tier (60s TTL) — list is invalidated by every new
+    // block, but at >1 req/s the 60s TTL still saves >>50 PG reads/min.
+    let key = format!(
+        "blocks:list:{limit}:{}",
+        before
+            .map(|b| b.0.to_string())
+            .unwrap_or_else(|| "tip".into())
+    );
+    let response: ListResponse = cached::get_or_load(&state, &key, CacheTier::Chain, || async {
+        let rows = blocks::list_before(&state.pool, before, limit).await?;
+        Ok::<_, ApiError>(ListResponse {
+            blocks: rows.iter().map(WireBlock::from).collect(),
+        })
+    })
+    .await?;
+    Ok(Json(response))
 }
 
 #[derive(Debug, Serialize)]

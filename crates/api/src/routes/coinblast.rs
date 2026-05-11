@@ -2,9 +2,9 @@
 //! coinblast frontend hits today (token cards, curve detail, recent
 //! trades feed). Same wire conventions as the chain-wide routes.
 
-use crate::SharedState;
 use crate::error::{ApiError, ApiResult};
 use crate::routes::clamp_limit;
+use crate::{CacheTier, SharedState, cached};
 use axum::extract::{Path, Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -23,7 +23,7 @@ struct TradeQuery {
     curve: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct WireToken {
     curve_address: String,
     token_address: String,
@@ -65,7 +65,7 @@ impl From<CbTokenRow> for WireToken {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct WireTrade {
     id: i64,
     curve_address: String,
@@ -101,17 +101,17 @@ impl From<CbTradeRow> for WireTrade {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct TokensResponse {
     tokens: Vec<WireToken>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct TokenDetailResponse {
     token: WireToken,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct TradesResponse {
     trades: Vec<WireTrade>,
 }
@@ -121,10 +121,15 @@ async fn list_tokens(
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<TokensResponse>> {
     let limit = clamp_limit(q.limit.as_deref());
-    let rows = cb_queries::list_tokens(&state.pool, limit).await?;
-    Ok(Json(TokensResponse {
-        tokens: rows.into_iter().map(WireToken::from).collect(),
-    }))
+    let key = format!("coinblast:tokens:{limit}");
+    let resp: TokensResponse = cached::get_or_load(&state, &key, CacheTier::Chain, || async {
+        let rows = cb_queries::list_tokens(&state.pool, limit).await?;
+        Ok::<_, ApiError>(TokensResponse {
+            tokens: rows.into_iter().map(WireToken::from).collect(),
+        })
+    })
+    .await?;
+    Ok(Json(resp))
 }
 
 async fn token_detail(

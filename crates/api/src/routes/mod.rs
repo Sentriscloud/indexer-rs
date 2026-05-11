@@ -8,6 +8,8 @@ pub mod coinblast;
 pub mod etherscan;
 pub mod health;
 pub mod leaderboards;
+pub mod metrics;
+pub mod readyz;
 pub mod stats;
 pub mod tx;
 

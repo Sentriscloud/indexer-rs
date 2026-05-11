@@ -1,9 +1,9 @@
 //! `/stats/daily` — chain-wide aggregates per day_bucket from the
 //! `stats_daily_mv` materialised view (db migration 0002).
 
-use crate::SharedState;
-use crate::error::ApiResult;
+use crate::error::{ApiError, ApiResult};
 use crate::routes::clamp_limit;
+use crate::{CacheTier, SharedState, cached};
 use axum::extract::{Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -15,7 +15,7 @@ struct ListQuery {
     limit: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct DailyRow {
     /// Decimal-string `floor(timestamp / 86400)`.
     day_bucket: String,
@@ -31,7 +31,7 @@ struct DailyRow {
     last_height: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct DailyResponse {
     daily: Vec<DailyRow>,
 }
@@ -41,20 +41,27 @@ async fn daily(
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<DailyResponse>> {
     let limit = clamp_limit(q.limit.as_deref());
-    let rows = stats::daily(&state.pool, limit).await?;
-    Ok(Json(DailyResponse {
-        daily: rows
-            .into_iter()
-            .map(|r| DailyRow {
-                day_bucket: r.day_bucket.to_string(),
-                block_count: r.block_count.to_string(),
-                tx_count: r.tx_count.to_string(),
-                gas_used: r.gas_used.to_string(),
-                first_height: r.first_height.to_string(),
-                last_height: r.last_height.to_string(),
-            })
-            .collect(),
-    }))
+    // Cache-aside: chain tier (60s TTL). MV refresh cadence is 5 min;
+    // even short cache TTL collapses 60s of bursts into 1 PG read.
+    let key = format!("stats:daily:{limit}");
+    let response: DailyResponse = cached::get_or_load(&state, &key, CacheTier::Chain, || async {
+        let rows = stats::daily(&state.pool, limit).await?;
+        Ok::<_, ApiError>(DailyResponse {
+            daily: rows
+                .into_iter()
+                .map(|r| DailyRow {
+                    day_bucket: r.day_bucket.to_string(),
+                    block_count: r.block_count.to_string(),
+                    tx_count: r.tx_count.to_string(),
+                    gas_used: r.gas_used.to_string(),
+                    first_height: r.first_height.to_string(),
+                    last_height: r.last_height.to_string(),
+                })
+                .collect(),
+        })
+    })
+    .await?;
+    Ok(Json(response))
 }
 
 /// Router for `/stats/daily`.
