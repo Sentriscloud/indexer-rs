@@ -16,6 +16,10 @@ axum.workspace = true
 tower = { workspace = true }
 tower-http = { workspace = true, features = ["cors", "trace", "timeout"] }
 
+# GraphQL.
+async-graphql.workspace = true
+async-graphql-axum.workspace = true
+
 # Serde — response shapes.
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

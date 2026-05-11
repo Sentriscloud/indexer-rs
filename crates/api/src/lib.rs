@@ -18,6 +18,7 @@
 #![cfg_attr(not(test), warn(missing_docs))]
 
 pub mod error;
+pub mod graphql;
 pub mod routes;
 pub mod serialise;
 
@@ -32,14 +33,18 @@ pub struct AppState {
     pub pool: PgPool,
 }
 
-/// Build the axum router with all Phase 5 routes mounted at the root.
-/// Caller adds middleware (CORS, tracing, timeouts) before binding.
+/// Build the axum router with all routes (REST + GraphQL) mounted at the
+/// root. Caller adds middleware (CORS, tracing, timeouts) before binding.
 pub fn make_router(state: AppState) -> Router {
+    let shared = Arc::new(state);
+    let schema = graphql::build_schema(shared.clone());
     Router::new()
         .merge(routes::health::router())
         .merge(routes::blocks::router())
         .merge(routes::tx::router())
-        .with_state(Arc::new(state))
+        .with_state(shared.clone())
+        .merge(graphql::router(schema))
+        .with_state(shared)
 }
 
 /// Convenience type alias for handlers that take the shared state via
