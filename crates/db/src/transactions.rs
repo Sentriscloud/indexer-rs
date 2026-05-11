@@ -85,6 +85,73 @@ pub async fn for_address(pool: &PgPool, addr: &str, limit: i64) -> DbResult<Vec<
         .map_err(Into::into)
 }
 
+/// Top senders by tx count (global). Mirrors `/accounts/active` in TS.
+/// Returns `(address, tx_count)` newest-rank-first.
+pub async fn top_senders(pool: &PgPool, limit: i64) -> DbResult<Vec<(String, i64)>> {
+    let rows = sqlx::query(
+        "SELECT from_addr AS address, COUNT(*) AS tx_count \
+         FROM transactions GROUP BY from_addr \
+         ORDER BY COUNT(*) DESC LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter()
+        .map(|r| {
+            Ok((
+                r.try_get::<String, _>("address")?,
+                r.try_get::<i64, _>("tx_count")?,
+            ))
+        })
+        .collect::<Result<_, sqlx::Error>>()
+        .map_err(Into::into)
+}
+
+/// Top transactions by `value` DESC, with the block timestamp joined in
+/// so callers can render "X SRX moved at T". Mirrors `/whale/transfers`.
+pub async fn top_by_value(pool: &PgPool, limit: i64) -> DbResult<Vec<TopTxRow>> {
+    let rows = sqlx::query(
+        "SELECT t.hash, t.from_addr, t.to_addr, t.value::text AS value_str, \
+                t.block_height, b.timestamp \
+         FROM transactions t JOIN blocks b ON b.height = t.block_height \
+         ORDER BY t.value DESC, t.block_height DESC LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter()
+        .map(|r| {
+            Ok(TopTxRow {
+                hash: r.try_get("hash")?,
+                from_addr: r.try_get("from_addr")?,
+                to_addr: r.try_get("to_addr")?,
+                value: r.try_get("value_str")?,
+                block_height: r.try_get("block_height")?,
+                timestamp: r.try_get("timestamp")?,
+            })
+        })
+        .collect::<Result<_, sqlx::Error>>()
+        .map_err(Into::into)
+}
+
+/// Compact row for `/whale/transfers` — value carried as decimal string
+/// (preserving numeric(78,0) precision over the wire).
+#[derive(Debug, Clone)]
+pub struct TopTxRow {
+    /// Tx hash.
+    pub hash: String,
+    /// Sender.
+    pub from_addr: String,
+    /// Receiver.
+    pub to_addr: Option<String>,
+    /// Decimal-string value.
+    pub value: String,
+    /// Block height.
+    pub block_height: i64,
+    /// Block timestamp (chain-time seconds).
+    pub timestamp: i64,
+}
+
 /// Cascade-delete txs for a given block (reorg rewind).
 ///
 /// FK ON DELETE CASCADE handles dependent `logs` rows; the caller drops the

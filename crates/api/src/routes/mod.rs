@@ -5,6 +5,7 @@
 pub mod address;
 pub mod blocks;
 pub mod health;
+pub mod leaderboards;
 pub mod tx;
 
 const DEFAULT_LIMIT: i64 = 25;
