@@ -24,6 +24,7 @@
 
 pub mod events;
 pub mod handlers;
+pub mod orphan;
 pub mod worker;
 
 pub use events::{COINBLAST_DEPLOY_BLOCK, COINBLAST_FACTORY_ADDRESS, Network};

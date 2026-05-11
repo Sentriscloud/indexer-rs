@@ -9,7 +9,7 @@
 use crate::events::{
     Buy, COINBLAST_DEPLOY_BLOCK, COINBLAST_FACTORY_ADDRESS, CurveCreated, Graduated, Network, Sell,
 };
-use crate::{CoinblastError, CoinblastResult, META_KEY_COINBLAST_CURSOR, handlers};
+use crate::{CoinblastError, CoinblastResult, META_KEY_COINBLAST_CURSOR, handlers, orphan};
 use alloy_primitives::B256;
 use alloy_sol_types::SolEvent;
 use indexer_chain::{BackoffConfig, ChainProvider, retry_with_backoff};
@@ -56,6 +56,7 @@ pub async fn run_coinblast_worker(
 ) -> CoinblastResult<()> {
     let factory = COINBLAST_FACTORY_ADDRESS(cfg.network);
     let mut known_curves = hydrate_known_curves(pool).await?;
+    let mut known_non_curves: HashSet<String> = HashSet::new();
     tracing::info!(
         network = ?cfg.network,
         factory = %format!("0x{}", hex::encode(factory.as_slice())),
@@ -96,6 +97,7 @@ pub async fn run_coinblast_worker(
             to,
             factory,
             &mut known_curves,
+            &mut known_non_curves,
             backoff,
             topic_curve_created,
             topic_buy,
@@ -139,6 +141,7 @@ async fn run_chunk(
     to: BlockHeight,
     factory: alloy_primitives::Address,
     known_curves: &mut HashSet<String>,
+    known_non_curves: &mut HashSet<String>,
     backoff: BackoffConfig,
     topic_curve_created: B256,
     topic_buy: B256,
@@ -170,12 +173,38 @@ async fn run_chunk(
 
     for l in &curve_logs {
         let emitter = format!("0x{}", hex::encode(l.address().as_slice()));
-        if !known_curves.contains(&emitter) {
-            continue;
-        }
         let Some(t0) = l.topics().first().copied() else {
             continue;
         };
+        if t0 != topic_buy && t0 != topic_sell && t0 != topic_graduated {
+            continue;
+        }
+        if !known_curves.contains(&emitter) {
+            // Unknown emitter — try to adopt as orphan curve (e.g. CBLAST).
+            // Skip if previously vetted out; otherwise probe via eth_call.
+            if known_non_curves.contains(&emitter) {
+                continue;
+            }
+            let block = l.block_number.unwrap_or(0) as i64;
+            let tx_hash = l
+                .transaction_hash
+                .map(|h| format!("0x{}", hex::encode(h.as_slice())))
+                .unwrap_or_default();
+            match orphan::try_adopt(pool, provider, l.address(), block, &tx_hash).await {
+                Ok(true) => {
+                    known_curves.insert(emitter.clone());
+                }
+                Ok(false) => {
+                    known_non_curves.insert(emitter);
+                    continue;
+                }
+                Err(e) => {
+                    tracing::debug!(addr = %emitter, error = %e, "orphan adopt probe failed; treating as non-curve for this run");
+                    known_non_curves.insert(emitter);
+                    continue;
+                }
+            }
+        }
         if t0 == topic_buy {
             handlers::apply_buy(pool, l).await?;
         } else if t0 == topic_sell {

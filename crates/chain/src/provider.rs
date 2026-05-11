@@ -10,9 +10,12 @@
 //! to share a connection pool with the REST client if desired.
 
 use crate::error::{ChainError, ChainResult, rpc_err};
-use alloy_primitives::Address;
+use alloy_primitives::{Address, Bytes};
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
-use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactionsKind, Filter, Log};
+use alloy_rpc_types::{
+    Block, BlockNumberOrTag, BlockTransactionsKind, Filter, Log, TransactionInput,
+    TransactionRequest,
+};
 use alloy_transport_http::Http;
 use indexer_domain::BlockHeight;
 
@@ -85,5 +88,16 @@ impl ChainProvider {
             filter = filter.address(addr);
         }
         self.inner.get_logs(&filter).await.map_err(rpc_err)
+    }
+
+    /// `eth_call` against `to` with abi-encoded `data`. Returns the raw
+    /// return bytes; caller decodes via `alloy_sol_types`. Used by the
+    /// CoinBlast worker to validate orphan curves (probe `token()` etc).
+    /// Latest block tag.
+    pub async fn call(&self, to: Address, data: Bytes) -> ChainResult<Bytes> {
+        let req = TransactionRequest::default()
+            .to(to)
+            .input(TransactionInput::new(data));
+        self.inner.call(&req).await.map_err(rpc_err)
     }
 }
