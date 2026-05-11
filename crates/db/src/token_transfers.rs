@@ -7,7 +7,10 @@ use sqlx::Row;
 /// Insert a single decoded transfer. The `(tx_hash, log_index)` pair is
 /// effectively unique for the source log, but the table doesn't pin a unique
 /// constraint on it (drizzle didn't either) — the worker dedupes upstream.
-pub async fn insert(pool: &PgPool, t: &TokenTransfer) -> DbResult<()> {
+pub async fn insert<'e, E>(executor: E, t: &TokenTransfer) -> DbResult<()>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     sqlx::query(
         "INSERT INTO token_transfers (block_height, tx_hash, log_index, contract, standard, \
             from_addr, to_addr, token_id, amount) \
@@ -22,7 +25,7 @@ pub async fn insert(pool: &PgPool, t: &TokenTransfer) -> DbResult<()> {
     .bind(&t.to_addr)
     .bind(t.token_id)
     .bind(t.amount)
-    .execute(pool)
+    .execute(executor)
     .await?;
     Ok(())
 }

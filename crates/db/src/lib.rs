@@ -9,6 +9,7 @@
 
 pub mod blocks;
 pub mod logs;
+pub mod meta;
 pub mod token_transfers;
 pub mod transactions;
 

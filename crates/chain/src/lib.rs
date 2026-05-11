@@ -26,4 +26,7 @@ pub mod pb {
 }
 
 pub use error::{ChainError, ChainResult};
+pub use grpc::GrpcClient;
+pub use provider::{ChainProvider, HttpProvider};
+pub use rest::{NativeTxResponse, RestClient};
 pub use retry::{BackoffConfig, retry_with_backoff};

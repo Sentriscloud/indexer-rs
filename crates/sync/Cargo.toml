@@ -8,3 +8,33 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+indexer-domain = { path = "../domain", version = "0.1.0" }
+indexer-db = { path = "../db", version = "0.1.0" }
+indexer-chain = { path = "../chain", version = "0.1.0" }
+
+# alloy types we re-shape into our domain types.
+alloy-primitives.workspace = true
+alloy-rpc-types.workspace = true
+
+# Async + sync primitives.
+tokio = { workspace = true, features = ["sync", "macros", "rt", "time"] }
+tokio-util = { workspace = true, features = ["rt"] }
+futures.workspace = true
+parking_lot.workspace = true
+
+# sqlx surface for transaction handles.
+sqlx.workspace = true
+
+# JSON-roundtrip path in convert.rs (decouple from alloy typed-tx churn).
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+# Logging + errors.
+tracing.workspace = true
+thiserror.workspace = true
+
+# Hex helpers for wire-bytes -> 0x-prefixed string.
+hex.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }

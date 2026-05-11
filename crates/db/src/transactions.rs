@@ -5,7 +5,10 @@ use indexer_domain::{BlockHeight, Hash, Transaction, TxIndex, TxType, Wei};
 use sqlx::Row;
 
 /// Insert a single tx. ON CONFLICT (hash) DO NOTHING for idempotency.
-pub async fn insert(pool: &PgPool, t: &Transaction) -> DbResult<()> {
+pub async fn insert<'e, E>(executor: E, t: &Transaction) -> DbResult<()>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     sqlx::query(
         "INSERT INTO transactions (hash, block_height, tx_index, from_addr, to_addr, value, \
             gas_limit, gas_used, gas_price, fee, nonce, data, status, contract_address, tx_type) \
@@ -27,7 +30,7 @@ pub async fn insert(pool: &PgPool, t: &Transaction) -> DbResult<()> {
     .bind(t.status)
     .bind(&t.contract_address)
     .bind(t.tx_type.as_str())
-    .execute(pool)
+    .execute(executor)
     .await?;
     Ok(())
 }
@@ -48,11 +51,17 @@ pub async fn get_by_hash(pool: &PgPool, hash: &Hash) -> DbResult<Option<Transact
 /// Cascade-delete txs for a given block (reorg rewind).
 ///
 /// FK ON DELETE CASCADE handles dependent `logs` rows; the caller drops the
-/// `blocks` row separately.
-pub async fn delete_for_block(pool: &PgPool, h: BlockHeight) -> DbResult<u64> {
+/// `blocks` row separately. With the per-block FK chain
+/// (logs -> transactions -> blocks), a `delete_from(blocks, h)` is enough on
+/// its own; this helper exists for callers that want to wipe txs without
+/// touching the block row (rare).
+pub async fn delete_for_block<'e, E>(executor: E, h: BlockHeight) -> DbResult<u64>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     let result = sqlx::query("DELETE FROM transactions WHERE block_height = $1")
         .bind(h)
-        .execute(pool)
+        .execute(executor)
         .await?;
     Ok(result.rows_affected())
 }

@@ -1,8 +1,10 @@
 //! Query helpers for `blocks`.
 //!
-//! Phase 1 keeps these as dynamic queries (`sqlx::query` / `query_as`) so the
-//! crate compiles without a live PG connection. Phase 2 swaps to compile-time
-//! `query!` once the `.sqlx/` cache is wired into CI.
+//! Helpers are generic over `sqlx::PgExecutor` so callers can pass either a
+//! `&PgPool` (one-shot statements) or a `&mut sqlx::Transaction<'_, Postgres>`
+//! (atomic multi-statement writes — see `crates/sync/block_writer.rs`).
+//! Phase 1 used dynamic queries; the compile-time `query!` swap lands in
+//! Phase 2/3 once the `.sqlx/` cache is wired into CI.
 
 use crate::{DbResult, PgPool};
 use indexer_domain::{Block, BlockHeight, Hash, Wei};
@@ -10,7 +12,10 @@ use sqlx::Row;
 
 /// Insert a single block. ON CONFLICT (height) DO NOTHING — idempotent for
 /// at-least-once delivery from the sync layer (per spec §5 invariant 1).
-pub async fn insert(pool: &PgPool, b: &Block) -> DbResult<()> {
+pub async fn insert<'e, E>(executor: E, b: &Block) -> DbResult<()>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     let signers = serde_json::Value::Array(
         b.justification_signers
             .iter()
@@ -35,7 +40,7 @@ pub async fn insert(pool: &PgPool, b: &Block) -> DbResult<()> {
     .bind(&b.state_root)
     .bind(b.round)
     .bind(signers)
-    .execute(pool)
+    .execute(executor)
     .await?;
     Ok(())
 }
@@ -73,6 +78,32 @@ pub async fn latest_height(pool: &PgPool) -> DbResult<Option<BlockHeight>> {
         .await?;
     let h: Option<i64> = row_opt.and_then(|r| r.try_get::<Option<i64>, _>("h").ok().flatten());
     Ok(h.map(BlockHeight))
+}
+
+/// Delete a block (and dependent txs/logs via FK CASCADE) at a height. Used
+/// by the reorg rewind path.
+pub async fn delete_at<'e, E>(executor: E, h: BlockHeight) -> DbResult<u64>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    let result = sqlx::query("DELETE FROM blocks WHERE height = $1")
+        .bind(h)
+        .execute(executor)
+        .await?;
+    Ok(result.rows_affected())
+}
+
+/// Delete every block at or above `h` (inclusive). Reorg helper used when
+/// the divergence point is `h`.
+pub async fn delete_from<'e, E>(executor: E, h: BlockHeight) -> DbResult<u64>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    let result = sqlx::query("DELETE FROM blocks WHERE height >= $1")
+        .bind(h)
+        .execute(executor)
+        .await?;
+    Ok(result.rows_affected())
 }
 
 fn row_to_block(row: sqlx::postgres::PgRow) -> Result<Block, sqlx::Error> {

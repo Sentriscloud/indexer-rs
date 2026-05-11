@@ -5,7 +5,10 @@ use indexer_domain::{BlockHeight, Hash, Log, LogIndex};
 use sqlx::Row;
 
 /// Insert a single log. ON CONFLICT (block_height, log_index) DO NOTHING.
-pub async fn insert(pool: &PgPool, l: &Log) -> DbResult<()> {
+pub async fn insert<'e, E>(executor: E, l: &Log) -> DbResult<()>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     sqlx::query(
         "INSERT INTO logs (block_height, tx_hash, log_index, address, topic0, topic1, topic2, topic3, data) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
@@ -20,7 +23,7 @@ pub async fn insert(pool: &PgPool, l: &Log) -> DbResult<()> {
     .bind(&l.topic2)
     .bind(&l.topic3)
     .bind(&l.data)
-    .execute(pool)
+    .execute(executor)
     .await?;
     Ok(())
 }
