@@ -39,6 +39,14 @@ RUN mkdir -p crates/domain/src crates/db/src crates/chain/src crates/handlers/sr
 # Layer 2: bring in real sources + rebuild.
 COPY crates crates
 COPY bin bin
+# Force cargo to rebuild every workspace crate. The stub-build layer above
+# cached compiled artefacts for our empty-stub lib.rs files; without this
+# `cargo clean -p ...`, cargo's fingerprint check sees no Cargo.toml change
+# and reuses the stale stub artefacts — `indexer-domain` ends up exporting
+# nothing, and `indexer-db` fails with `no BlockHeight in the root`.
+RUN cargo clean -p indexer-domain -p indexer-db -p indexer-chain \
+    -p indexer-handlers -p indexer-coinblast -p indexer-sync \
+    -p indexer-cache -p indexer-analytics -p indexer-api -p indexer-bin
 RUN cargo build --release --locked --bins
 
 # Runtime image — only the binaries + their TLS / libc deps.
