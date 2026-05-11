@@ -21,6 +21,9 @@ struct ListQuery {
 #[derive(Debug, Serialize, Deserialize)]
 struct ListResponse {
     blocks: Vec<WireBlock>,
+    /// Cursor for the next page. Pass back as `?before=<value>`. None when
+    /// the response includes block height 0 (no more pages).
+    next_cursor: Option<String>,
 }
 
 async fn list(
@@ -44,8 +47,16 @@ async fn list(
     );
     let response: ListResponse = cached::get_or_load(&state, &key, CacheTier::Chain, || async {
         let rows = blocks::list_before(&state.pool, before, limit).await?;
+        // Compute next cursor: lowest height in this page minus 1. If page
+        // already includes block 0, no more pages.
+        let next_cursor = rows
+            .last()
+            .map(|b| b.height.0)
+            .filter(|h| *h > 0)
+            .map(|h| (h - 1).to_string());
         Ok::<_, ApiError>(ListResponse {
             blocks: rows.iter().map(WireBlock::from).collect(),
+            next_cursor,
         })
     })
     .await?;

@@ -43,5 +43,8 @@ thiserror.workspace = true
 # Constant-time compare for the bearer-token auth middleware.
 subtle = "2"
 
+# Hex render for request_id middleware.
+hex.workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

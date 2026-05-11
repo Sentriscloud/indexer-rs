@@ -105,6 +105,7 @@ pub fn make_router(state: AppState, cfg: RouterConfig) -> Router {
     let rest = Router::new()
         .merge(routes::health::router())
         .merge(routes::readyz::router())
+        .merge(routes::openapi::router())
         .merge(routes::blocks::router())
         .merge(routes::tx::router())
         .merge(routes::address::router())
@@ -124,6 +125,10 @@ pub fn make_router(state: AppState, cfg: RouterConfig) -> Router {
     app.layer(from_fn(observability::track_request))
         .layer(GovernorLayer { config: governor })
         .layer(from_fn_with_state(auth_state, auth::require_bearer))
+        // request_id is outermost so EVERY layer + handler observes the same
+        // value, and the response header carries it back even on 4xx/5xx
+        // before the auth or governor layers reject.
+        .layer(from_fn(error::request_id_middleware))
 }
 
 /// Time-to-live tier hints exported for route handlers calling

@@ -1,0 +1,260 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Sentrix Chain Indexer API",
+    "version": "0.1.0",
+    "description": "Read-only REST + GraphQL surface over the Sentrix Chain indexer DB. Mirrors the TS Fastify port byte-for-byte on response shape; production-grade layers (cache, rate-limit, auth, metrics, readyz) added on top.\n\nWire conventions:\n- All bigint fields (block heights, timestamps, gas, value, fee) render as decimal strings to survive JSON's f64 precision limit.\n- `from_addr` / `to_addr` renamed to `from` / `to` in the wire shape.\n- Log topics flattened to a `topics` array with null entries dropped.\n- Address inputs are lowercased server-side.",
+    "license": { "name": "BUSL-1.1" }
+  },
+  "servers": [
+    { "url": "https://api.sentrixchain.com", "description": "Mainnet" },
+    { "url": "https://testnet-api.sentrixchain.com", "description": "Testnet" },
+    { "url": "http://localhost:8080", "description": "Local dev" }
+  ],
+  "tags": [
+    { "name": "health",     "description": "Liveness + readiness probes" },
+    { "name": "blocks",     "description": "Block list + detail" },
+    { "name": "tx",         "description": "Transaction detail" },
+    { "name": "address",    "description": "Per-address activity" },
+    { "name": "leaderboards", "description": "Chain-wide aggregates" },
+    { "name": "coinblast",  "description": "CoinBlast launchpad data" },
+    { "name": "stats",      "description": "Daily aggregates" },
+    { "name": "etherscan",  "description": "Etherscan-compat shim" },
+    { "name": "graphql",    "description": "GraphQL transport" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Optional. Set INDEXER_API_BEARER_TOKEN on the server to require `Authorization: Bearer <token>` on every route except /health. Default deploys leave this off and gate auth at the Caddy edge."
+      }
+    },
+    "parameters": {
+      "limit": {
+        "name": "limit",
+        "in": "query",
+        "description": "Page size, clamped 1..=100, default 25.",
+        "required": false,
+        "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 25 }
+      },
+      "before": {
+        "name": "before",
+        "in": "query",
+        "description": "Block-height upper bound (inclusive). Use the `next_cursor` value from the previous page response.",
+        "required": false,
+        "schema": { "type": "string" }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": ["error", "code"],
+        "properties": {
+          "error": { "type": "string", "description": "Human-readable message." },
+          "code":  { "type": "string", "enum": ["invalid_query", "not_found", "internal", "unauthorized"] },
+          "request_id": { "type": "string", "description": "Echo of x-request-id header for log correlation." }
+        }
+      },
+      "Block": {
+        "type": "object",
+        "required": ["height","hash","parent_hash","timestamp","validator","gas_used","gas_limit","tx_count","round"],
+        "properties": {
+          "height":       { "type": "string", "description": "Decimal-string bigint" },
+          "hash":         { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
+          "parent_hash":  { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
+          "timestamp":    { "type": "string", "description": "Unix seconds, decimal string" },
+          "validator":    { "type": "string", "pattern": "^0x[0-9a-f]{40}$" },
+          "gas_used":     { "type": "string" },
+          "gas_limit":    { "type": "string" },
+          "base_fee":     { "type": ["string", "null"] },
+          "tx_count":     { "type": "integer" },
+          "state_root":   { "type": ["string", "null"] },
+          "round":        { "type": "integer" }
+        }
+      },
+      "Transaction": {
+        "type": "object",
+        "required": ["hash","block_height","tx_index","from","value","gas_limit","fee","nonce","status","tx_type"],
+        "properties": {
+          "hash":             { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
+          "block_height":     { "type": "string" },
+          "tx_index":         { "type": "integer" },
+          "from":             { "type": "string", "pattern": "^0x[0-9a-f]{40}$" },
+          "to":               { "type": ["string", "null"] },
+          "value":            { "type": "string", "description": "numeric(78,0) decimal string" },
+          "gas_limit":        { "type": "string" },
+          "gas_used":         { "type": ["string", "null"] },
+          "gas_price":        { "type": ["string", "null"] },
+          "fee":              { "type": "string" },
+          "nonce":            { "type": "string" },
+          "data":             { "type": ["string", "null"] },
+          "status":           { "type": "integer", "enum": [0, 1] },
+          "contract_address": { "type": ["string", "null"] },
+          "tx_type":          { "type": "string", "enum": ["native", "evm", "system", "coinbase"] }
+        }
+      },
+      "Log": {
+        "type": "object",
+        "required": ["block_height","tx_hash","log_index","address","topics"],
+        "properties": {
+          "block_height": { "type": "string" },
+          "tx_hash":      { "type": "string" },
+          "log_index":    { "type": "integer" },
+          "address":      { "type": "string", "pattern": "^0x[0-9a-f]{40}$" },
+          "topics":       { "type": "array", "items": { "type": "string" } },
+          "data":         { "type": ["string", "null"] }
+        }
+      },
+      "Health":   { "type": "object", "required": ["ok"], "properties": { "ok": { "type": "boolean" } } },
+      "Readiness": {
+        "type": "object",
+        "required": ["ok","checks"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "checks": {
+            "type": "object",
+            "required": ["pg","cache"],
+            "properties": {
+              "pg":    { "type": "string", "description": "`ok` or `down: <reason>`" },
+              "cache": { "type": "string", "description": "`ok` / `disabled` / `down: <reason>`" }
+            }
+          }
+        }
+      },
+      "BlocksList": {
+        "type": "object",
+        "required": ["blocks"],
+        "properties": {
+          "blocks":      { "type": "array", "items": { "$ref": "#/components/schemas/Block" } },
+          "next_cursor": { "type": ["string", "null"], "description": "Pass back as ?before= to fetch the next page. Null when the page reached block 0." }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["health"], "summary": "Liveness probe (always 200 when process is up)",
+        "responses": { "200": { "description": "ok", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Health" } } } } }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "tags": ["health"], "summary": "Readiness probe — PG + cache reachability",
+        "responses": {
+          "200": { "description": "ready", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Readiness" } } } },
+          "503": { "description": "not ready (PG down)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Readiness" } } } }
+        }
+      }
+    },
+    "/blocks": {
+      "get": {
+        "tags": ["blocks"], "summary": "Latest blocks (paginated)",
+        "parameters": [
+          { "$ref": "#/components/parameters/limit" },
+          { "$ref": "#/components/parameters/before" }
+        ],
+        "responses": {
+          "200": { "description": "ok", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BlocksList" } } } },
+          "400": { "description": "invalid `before`", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/blocks/{height}": {
+      "get": {
+        "tags": ["blocks"], "summary": "Block detail with nested transactions",
+        "parameters": [{ "name": "height", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "ok" },
+          "400": { "description": "invalid height", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "no block at this height", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/tx/{hash}": {
+      "get": {
+        "tags": ["tx"], "summary": "Transaction detail with logs (newest-first)",
+        "parameters": [{ "name": "hash", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "ok" },
+          "404": { "description": "no tx with this hash", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/address/{addr}/txs": {
+      "get": {
+        "tags": ["address"], "summary": "Tx history for an address (sender OR receiver, newest-first)",
+        "parameters": [
+          { "name": "addr", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "$ref": "#/components/parameters/limit" }
+        ],
+        "responses": { "200": { "description": "ok" } }
+      }
+    },
+    "/address/{addr}/transfers": {
+      "get": {
+        "tags": ["address"], "summary": "Token-transfer history for an address",
+        "parameters": [
+          { "name": "addr", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "standard", "in": "query", "schema": { "type": "string", "enum": ["erc20","erc721","erc1155"] } },
+          { "$ref": "#/components/parameters/limit" }
+        ],
+        "responses": { "200": { "description": "ok" } }
+      }
+    },
+    "/accounts/active":  { "get": { "tags": ["leaderboards"], "summary": "Top senders by tx count", "parameters": [{ "$ref": "#/components/parameters/limit" }], "responses": { "200": { "description": "ok" } } } },
+    "/whale/transfers":  { "get": { "tags": ["leaderboards"], "summary": "Top txs by value DESC", "parameters": [{ "$ref": "#/components/parameters/limit" }], "responses": { "200": { "description": "ok" } } } },
+    "/coinblast/tokens": { "get": { "tags": ["coinblast"], "summary": "Curve list (newest-first)", "parameters": [{ "$ref": "#/components/parameters/limit" }], "responses": { "200": { "description": "ok" } } } },
+    "/coinblast/tokens/{curve}": {
+      "get": {
+        "tags": ["coinblast"], "summary": "Curve detail",
+        "parameters": [{ "name": "curve", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "ok" }, "404": { "description": "no curve at this address" } }
+      }
+    },
+    "/coinblast/trades": {
+      "get": {
+        "tags": ["coinblast"], "summary": "Recent trades (newest-first)",
+        "parameters": [
+          { "name": "curve", "in": "query", "schema": { "type": "string" }, "description": "Optional: restrict to one curve." },
+          { "$ref": "#/components/parameters/limit" }
+        ],
+        "responses": { "200": { "description": "ok" } }
+      }
+    },
+    "/stats/daily": {
+      "get": {
+        "tags": ["stats"], "summary": "Chain-wide aggregates per day_bucket (from stats_daily_mv)",
+        "parameters": [{ "$ref": "#/components/parameters/limit" }],
+        "responses": { "200": { "description": "ok" } }
+      }
+    },
+    "/api": {
+      "get": {
+        "tags": ["etherscan"], "summary": "Etherscan-compat shim",
+        "parameters": [
+          { "name": "module",  "in": "query", "required": true,  "schema": { "type": "string", "enum": ["account","block","stats"] } },
+          { "name": "action",  "in": "query", "required": true,  "schema": { "type": "string", "enum": ["txlist","getblocknobytime","ethsupply"] } },
+          { "name": "address", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "timestamp", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "closest", "in": "query", "required": false, "schema": { "type": "string", "enum": ["before","after"] } }
+        ],
+        "responses": { "200": { "description": "Etherscan envelope { status, message, result }" } }
+      }
+    },
+    "/graphql": {
+      "post": {
+        "tags": ["graphql"], "summary": "GraphQL endpoint — supports block(height), blocks(first, before), transaction(hash)",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "query": { "type": "string" }, "variables": { "type": "object" } } } } } },
+        "responses": { "200": { "description": "ok" } }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": ["health"], "summary": "Prometheus exposition (text/plain)",
+        "responses": { "200": { "description": "ok", "content": { "text/plain": {} } } }
+      }
+    }
+  }
+}

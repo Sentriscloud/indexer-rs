@@ -2639,6 +2639,7 @@ dependencies = [
  "async-graphql",
  "async-graphql-axum",
  "axum",
+ "hex",
  "indexer-cache",
  "indexer-db",
  "indexer-domain",

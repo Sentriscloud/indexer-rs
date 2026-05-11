@@ -313,5 +313,36 @@ echo "$metrics" | grep -q '^indexer_api_requests_total{' || fail "/metrics missi
 echo "$metrics" | grep -q '^indexer_api_request_seconds_bucket{' || fail "/metrics missing latency histogram"
 ok "/metrics (Prometheus exposition with request counter + latency histogram)"
 
+# request_id header set on every response (generated server-side; clients
+# pass through if they want).
+id=$(curl -fsS -D - "$API_BASE/health" 2>&1 | tr -d '\r' | awk -F': ' '/^x-request-id/ {print $2}')
+[[ -n "$id" ]] || fail "x-request-id header missing from /health response"
+ok "x-request-id header echoed ($id)"
+
+# request_id passthrough — client-provided header is preserved server-side.
+id2=$(curl -fsS -D - -H "x-request-id: client-supplied-abc" "$API_BASE/health" 2>&1 | tr -d '\r' | awk -F': ' '/^x-request-id/ {print $2}')
+[[ "$id2" == "client-supplied-abc" ]] || fail "x-request-id passthrough broken (got '$id2')"
+ok "x-request-id passthrough preserves client-supplied value"
+
+# /openapi.json valid JSON containing the expected title.
+v=$(curl -fsS "$API_BASE/openapi.json" | jq -er '.info.title')
+[[ "$v" == "Sentrix Chain Indexer API" ]] || fail "/openapi.json title mismatch (got '$v')"
+ok "/openapi.json valid spec served"
+
+# /docs Swagger UI renders.
+code=$(curl -s -o /dev/null -w '%{http_code}' "$API_BASE/docs")
+[[ "$code" == "200" ]] || fail "/docs != 200 (got $code)"
+ok "/docs (Swagger UI rendered)"
+
+# /blocks list returns next_cursor for pagination.
+cur=$(curl -fsS "$API_BASE/blocks?limit=2" | jq -r '.next_cursor')
+[[ "$cur" != "null" && -n "$cur" ]] || fail "/blocks?limit=2 next_cursor missing"
+ok "/blocks pagination cursor returned ($cur)"
+
+# Page 2 via cursor returns the rest.
+v=$(curl -fsS "$API_BASE/blocks?limit=2&before=$cur" | jq -r '.blocks | length')
+[[ "$v" -ge "1" ]] || fail "/blocks page 2 via cursor returned 0 rows"
+ok "/blocks page 2 via cursor returns more rows"
+
 echo
-echo "✓ smoke PASSED — 23+ endpoints healthy, auth + readyz + metrics all green"
+echo "✓ smoke PASSED — 30+ assertions: REST + GraphQL + auth + readyz + metrics + openapi + cursor + request_id all green"
