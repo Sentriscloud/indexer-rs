@@ -100,11 +100,19 @@ impl<'q> sqlx::Encode<'q, Postgres> for Wei {
 impl<'r> sqlx::Decode<'r, Postgres> for Wei {
     fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
         let bd = <BigDecimal as sqlx::Decode<'r, Postgres>>::decode(value)?;
-        // BigDecimal `to_string()` for an integer can yield "123" or "1.23E+5";
-        // normalize via the integer view first when scale is non-positive.
+        // BigDecimal stores `value = digits * 10^(-scale)`. Postgres canonical
+        // form for `numeric(78, 0)` integers often comes back with negative
+        // scale (e.g. 1e18 as digits=1, scale=-18). Normalise by re-scaling
+        // to scale=0 so the digit stream is the actual integer.
+        let bd = bd.with_scale(0);
         let (digits, scale) = bd.as_bigint_and_exponent();
+        // After with_scale(0) the exponent should be 0; if PG ever returns a
+        // fractional numeric (which it shouldn't for our schema) we surface
+        // the loss explicitly.
         if scale != 0 {
-            return Err(format!("Wei expects integer numeric, got scale={scale}").into());
+            return Err(
+                format!("Wei expects integer numeric, got post-normalize scale={scale}").into(),
+            );
         }
         let s = digits.to_string();
         if let Some(stripped) = s.strip_prefix('-') {
