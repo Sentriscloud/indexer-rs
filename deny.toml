@@ -21,6 +21,10 @@ allow = [
     "Zlib",
     "0BSD",
     "BUSL-1.1",
+    # webpki-roots v1.x switched from MPL-2.0 to CDLA-Permissive-2.0; pulled in
+    # transitively via reqwest -> rustls -> webpki-roots. Permissive licence,
+    # OSI-aligned in spirit (no copyleft, attribution-only).
+    "CDLA-Permissive-2.0",
 ]
 # We deliberately do NOT allow GPL family.
 
@@ -30,7 +34,13 @@ wildcards = "deny"
 
 [advisories]
 yanked = "deny"
-ignore = []
+ignore = [
+    # `paste` is unmaintained but still widely used as a transitive dep
+    # (alloy / sqlx / prost ecosystems). No vulnerability — just author
+    # archived the repo. Track upstream displacement; remove when our
+    # dep tree no longer pulls it.
+    "RUSTSEC-2024-0436",
+]
 
 [sources]
 unknown-registry = "deny"
