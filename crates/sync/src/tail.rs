@@ -18,6 +18,7 @@
 use crate::cursor::read_cursor;
 use crate::single_flight::{Offer, SingleFlight};
 use crate::{SyncConfig, SyncError, SyncResult, backfill};
+use indexer_analytics::AnalyticsHandle;
 use indexer_chain::pb;
 use indexer_chain::{BackoffConfig, ChainProvider, GrpcClient};
 use indexer_db::PgPool;
@@ -47,6 +48,7 @@ pub async fn run_tail(
     cfg: &SyncConfig,
     gate: Arc<SingleFlight>,
     cancel: CancellationToken,
+    analytics: Option<&AnalyticsHandle>,
 ) -> SyncResult<TailExit> {
     let mut stream = grpc
         .stream_events(pb::StreamEventsRequest {
@@ -73,7 +75,7 @@ pub async fn run_tail(
                             let Some(tip) = b.block.map(|blk| BlockHeight::from(blk.index)) else {
                                 continue;
                             };
-                            handle_finalized(pool, provider, cfg, &gate, backoff, tip).await?;
+                            handle_finalized(pool, provider, cfg, &gate, backoff, tip, analytics).await?;
                         }
                         Some(Lagged(_)) => return Ok(TailExit::Lagged),
                         Some(PendingTx(_) | ValidatorSetChange(_) | Log(_)) | None => {
@@ -97,6 +99,7 @@ async fn handle_finalized(
     gate: &SingleFlight,
     backoff: BackoffConfig,
     tip: BlockHeight,
+    analytics: Option<&AnalyticsHandle>,
 ) -> SyncResult<()> {
     let mut current = match gate.offer(tip) {
         Offer::Stashed => return Ok(()),
@@ -108,7 +111,7 @@ async fn handle_finalized(
         if cap > cursor.0 {
             let mut h = BlockHeight(cursor.0 + 1);
             while h.0 <= cap {
-                backfill::ingest_one(pool, provider, h, backoff).await?;
+                backfill::ingest_one(pool, provider, h, backoff, analytics).await?;
                 h = BlockHeight(h.0 + 1);
             }
         }

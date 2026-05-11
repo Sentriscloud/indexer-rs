@@ -14,6 +14,7 @@ use crate::block_writer::{BlockBundle, write_block};
 use crate::convert::{to_domain_block, to_domain_log, to_domain_txs};
 use crate::cursor::read_cursor;
 use crate::{SyncConfig, SyncError, SyncResult};
+use indexer_analytics::AnalyticsHandle;
 use indexer_chain::{BackoffConfig, ChainProvider, retry_with_backoff};
 use indexer_db::PgPool;
 use indexer_domain::BlockHeight;
@@ -27,6 +28,7 @@ pub async fn run_backfill(
     provider: &ChainProvider,
     cfg: &SyncConfig,
     cancel: CancellationToken,
+    analytics: Option<&AnalyticsHandle>,
 ) -> SyncResult<BlockHeight> {
     let mut cursor = read_cursor(pool).await?.unwrap_or(BlockHeight(-1));
     let backoff = BackoffConfig::default();
@@ -55,7 +57,7 @@ pub async fn run_backfill(
             return Ok(cursor);
         }
         let next = BlockHeight(cursor.0 + 1);
-        ingest_one(pool, provider, next, backoff).await?;
+        ingest_one(pool, provider, next, backoff, analytics).await?;
         cursor = next;
     }
     tracing::info!(
@@ -71,6 +73,7 @@ pub async fn ingest_one(
     provider: &ChainProvider,
     h: BlockHeight,
     backoff: BackoffConfig,
+    analytics: Option<&AnalyticsHandle>,
 ) -> SyncResult<()> {
     let block_opt =
         retry_with_backoff(backoff, || async { provider.block_with_txs(h).await }).await?;
@@ -101,6 +104,7 @@ pub async fn ingest_one(
             txs: dom_txs,
             logs: dom_logs,
         },
+        analytics,
     )
     .await
 }

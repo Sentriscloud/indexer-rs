@@ -11,6 +11,7 @@ authors.workspace = true
 indexer-domain = { path = "../domain", version = "0.1.0" }
 indexer-db = { path = "../db", version = "0.1.0" }
 indexer-chain = { path = "../chain", version = "0.1.0" }
+indexer-analytics = { path = "../analytics", version = "0.1.0" }
 
 # alloy types we re-shape into our domain types.
 alloy-primitives.workspace = true

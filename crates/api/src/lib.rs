@@ -44,6 +44,7 @@ pub fn make_router(state: AppState) -> Router {
         .merge(routes::tx::router())
         .merge(routes::address::router())
         .merge(routes::leaderboards::router())
+        .merge(routes::coinblast::router())
         .with_state(shared.clone())
         .merge(graphql::router(schema))
         .with_state(shared)

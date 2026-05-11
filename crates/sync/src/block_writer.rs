@@ -5,9 +5,15 @@
 //! state) or none of it does (a crash mid-write leaves the cursor pointing
 //! at the previous height + the partial rows are rolled back). Spec §5
 //! invariants 1, 2, 10.
+//!
+//! After commit, optionally pushes one [`indexer_analytics::RawTxRow`] per
+//! tx into the analytics buffer. The push is fire-and-forget — analytics is
+//! observability, not correctness, so a closed channel logs a warning but
+//! doesn't fail the write.
 
 use crate::cursor::write_cursor;
 use crate::{SyncError, SyncResult};
+use indexer_analytics::{AnalyticsHandle, RawTxRow};
 use indexer_db::{PgPool, blocks, logs, transactions};
 use indexer_domain::{Block, Log, Transaction};
 
@@ -23,11 +29,17 @@ pub struct BlockBundle {
 }
 
 /// Write a block bundle + advance the chain-wide cursor in one transaction.
+/// `analytics` is optional — when wired, each tx in the bundle gets pushed
+/// to the analytics buffer after the SQL commit.
 ///
 /// Returns Ok on commit. Returns Err with the underlying sqlx/db error on
 /// rollback — the cursor stays at its previous value, the writer can retry
 /// the same height.
-pub async fn write_block(pool: &PgPool, b: BlockBundle) -> SyncResult<()> {
+pub async fn write_block(
+    pool: &PgPool,
+    b: BlockBundle,
+    analytics: Option<&AnalyticsHandle>,
+) -> SyncResult<()> {
     let mut tx = pool.begin().await.map_err(SyncError::from)?;
 
     // Order matters: blocks first (FK target), then transactions (FK target
@@ -46,5 +58,29 @@ pub async fn write_block(pool: &PgPool, b: BlockBundle) -> SyncResult<()> {
     write_cursor(&mut *tx, b.block.height, b.block.timestamp).await?;
 
     tx.commit().await.map_err(SyncError::from)?;
+
+    // Best-effort analytics push, after the SQL boundary so a failed flusher
+    // can't roll back our data.
+    if let Some(handle) = analytics {
+        for t in &b.txs {
+            let row = RawTxRow {
+                block_height: b.block.height.as_u64(),
+                timestamp: b.block.timestamp as u64,
+                tx_hash: t.hash.clone(),
+                from_addr: t.from_addr.clone(),
+                to_addr: t.to_addr.clone(),
+                value_str: t.value.to_string(),
+                fee_str: t.fee.to_string(),
+                gas_used: t.gas_used.unwrap_or(0) as u64,
+                status: t.status as u8,
+                tx_type: t.tx_type.as_str().to_string(),
+            };
+            if let Err(e) = handle.push(row) {
+                tracing::warn!(error = %e, "analytics push failed; flusher closed?");
+                break;
+            }
+        }
+    }
+
     Ok(())
 }

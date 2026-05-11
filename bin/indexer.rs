@@ -88,23 +88,22 @@ async fn main() -> anyhow::Result<()> {
     let provider = ChainProvider::http(&cfg.rpc_url)?;
     let cancel = CancellationToken::new();
 
-    // Analytics flusher (optional). Spawn first so the handle is ready when
-    // the sync layer wires its callback (the actual push-on-commit hookup
-    // is a follow-up; this scaffolds the flusher + final-drain machinery).
-    let analytics_join = match cfg.clickhouse_url.as_deref() {
+    // Analytics flusher (optional). The handle threads into both the
+    // backfill and tail loops so every committed tx pushes one RawTxRow.
+    let (analytics_handle, analytics_join) = match cfg.clickhouse_url.as_deref() {
         Some(url) => {
             let ch = ChClient::default().with_url(url);
-            let (_handle, join) = run_flusher(
+            let (handle, join) = run_flusher(
                 ch,
                 cfg.clickhouse_raw_tx_table.clone(),
                 Duration::from_secs(cfg.indexer_analytics_flush_secs),
                 cancel.clone(),
             );
-            Some(join)
+            (Some(handle), Some(join))
         }
         None => {
             tracing::info!("CLICKHOUSE_URL unset; analytics flusher disabled");
-            None
+            (None, None)
         }
     };
 
@@ -114,6 +113,7 @@ async fn main() -> anyhow::Result<()> {
         let pool = pool.clone();
         let provider = provider.clone();
         let cancel = cancel.clone();
+        let analytics = analytics_handle.clone();
         let interval = Duration::from_secs(cfg.indexer_backfill_loop_secs);
         tokio::spawn(async move {
             let cfg = SyncConfig::default();
@@ -122,7 +122,7 @@ async fn main() -> anyhow::Result<()> {
                 tokio::select! {
                     _ = cancel.cancelled() => return Ok::<(), anyhow::Error>(()),
                     _ = tick.tick() => {
-                        if let Err(e) = run_backfill(&pool, &provider, &cfg, cancel.clone()).await {
+                        if let Err(e) = run_backfill(&pool, &provider, &cfg, cancel.clone(), analytics.as_ref()).await {
                             tracing::warn!(error = %e, "backfill loop iteration failed");
                         }
                     }
@@ -140,6 +140,7 @@ async fn main() -> anyhow::Result<()> {
             let provider = provider.clone();
             let cancel = cancel.clone();
             let gate = gate.clone();
+            let analytics = analytics_handle.clone();
             Some(tokio::spawn(async move {
                 let sync_cfg = SyncConfig::default();
                 loop {
@@ -161,6 +162,7 @@ async fn main() -> anyhow::Result<()> {
                         &sync_cfg,
                         gate.clone(),
                         cancel.clone(),
+                        analytics.as_ref(),
                     )
                     .await
                     {

@@ -2678,6 +2678,7 @@ dependencies = [
  "alloy-rpc-types",
  "futures",
  "hex",
+ "indexer-analytics",
  "indexer-chain",
  "indexer-db",
  "indexer-domain",

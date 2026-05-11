@@ -4,6 +4,7 @@
 
 pub mod address;
 pub mod blocks;
+pub mod coinblast;
 pub mod health;
 pub mod leaderboards;
 pub mod tx;
