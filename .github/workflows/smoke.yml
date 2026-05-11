@@ -1,0 +1,39 @@
+name: smoke
+
+# End-to-end smoke against a real Postgres + the release `api` binary.
+# Catches the class of bug (Wei decode, MV math, route plumbing) that
+# unit tests can't see because they never touch a live DB or the axum
+# router.
+#
+# Runs on every push to main + every PR. ~3-5 min per run after first
+# pass (cargo cache reused).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  smoke:
+    name: end-to-end smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install protoc (chain crate build dep)
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run smoke
+        run: ./scripts/smoke.sh
