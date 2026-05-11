@@ -2,7 +2,7 @@
 
 Rust rewrite of the [Sentriscloud/indexer](https://github.com/Sentriscloud/indexer) TypeScript indexer, with Redis cache and ClickHouse analytics layers added.
 
-**Status:** Phase 0 — workspace scaffolded. No functional code yet. See spec for the full plan.
+**Status:** Code-complete through spec Phase 9 (deploy artifacts shipped). Phases 10/11 are operator actions (dual-run cutover + TS decom). See **Development phases** below for what landed.
 
 ## Why
 
@@ -59,26 +59,72 @@ docker/            Dockerfiles + docker-compose
 
 ```bash
 cargo build --release
-cargo nextest run
+cargo test --workspace                                      # 20+ unit tests
 cargo clippy --workspace --all-targets -- -D warnings
 cargo deny check
 ```
 
+## Run
+
+Two binaries, both env-configured (`figment` reads from `Env::raw()`):
+
+```bash
+# API server — REST + GraphQL
+DATABASE_URL=postgres://indexer:indexer@localhost:5432/indexer \
+INDEXER_API_BIND=0.0.0.0:8080 \
+  ./target/release/api
+
+# Sync + CoinBlast worker daemon
+DATABASE_URL=postgres://indexer:indexer@localhost:5432/indexer \
+RPC_URL=https://rpc.sentrixchain.com \
+GRPC_URL=https://grpc.sentrixchain.com:443 \
+INDEXER_NETWORK=mainnet \
+CLICKHOUSE_URL=http://localhost:8123 \
+  ./target/release/indexer
+```
+
+Or via Docker compose (postgres + indexer + api wired):
+
+```bash
+cp compose.env.example compose.env  # add your secrets
+docker compose up -d
+curl http://127.0.0.1:8080/health   # {"ok":true}
+```
+
+## API surface
+
+REST (snake_case keys, bigint stringified, mirrors TS Fastify port):
+
+| Path | Description |
+| --- | --- |
+| `GET /health` | Liveness — `{"ok":true}` |
+| `GET /blocks?limit&before` | Latest blocks, newest-first |
+| `GET /blocks/:height` | Block detail with nested transactions |
+| `GET /tx/:hash` | Transaction detail with logs |
+| `GET /address/:addr/txs?limit` | Address tx history |
+| `GET /address/:addr/transfers?limit&standard` | Token-transfer history |
+
+GraphQL:
+
+| Path | Description |
+| --- | --- |
+| `POST /graphql` | Schema: `block(height)`, `blocks(first, before)`, `transaction(hash)` |
+| `GET /graphql/playground` | GraphiQL UI |
+
 ## Development phases
 
-- **Phase 0** — workspace bootstrap (this commit)
-- **Phase 0.5** — capture golden snapshots from TS production
-- **Phase 1** — domain + db
-- **Phase 2** — chain client
-- **Phase 3** — sync core
-- **Phase 4** — coinblast worker
-- **Phase 5** — REST API (snapshot-test gated)
-- **Phase 6** — GraphQL
-- **Phase 7** — Redis cache
-- **Phase 8** — ClickHouse analytics
-- **Phase 9** — docker-compose + production-ready deploy
-- **Phase 10** — dual-run with TS indexer for ≥1 week of zero-diff
-- **Phase 11** — cutover + decommission TS
+- ✅ **Phase 0** — workspace bootstrap
+- ✅ **Phase 1** — domain + db (newtypes, Wei, schema mirroring TS drizzle)
+- ✅ **Phase 2** — chain client (alloy provider + tonic gRPC + native REST + retry)
+- ✅ **Phase 3** — sync core (backfill + tail + reorg + cursor + single-flight)
+- ✅ **Phase 4** — CoinBlast worker (factory + curve event handlers + orphan adoption)
+- ✅ **Phase 5** — REST API (axum, byte-fidelity with TS Fastify port)
+- ✅ **Phase 6** — GraphQL (async-graphql + GraphiQL playground)
+- ✅ **Phase 7** — Redis cache (fred-9, 3-tier TTL, circuit breaker)
+- ✅ **Phase 8** — ClickHouse analytics (RawTxRow + buffered flusher)
+- ✅ **Phase 9** — Dockerfile + docker-compose + bin runtime wiring
+- 🔜 **Phase 10** — dual-run with TS indexer for ≥1 week zero-diff (operator)
+- 🔜 **Phase 11** — cutover + decommission TS (operator)
 
 ## License
 
