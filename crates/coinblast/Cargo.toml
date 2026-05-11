@@ -8,3 +8,28 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+indexer-domain = { path = "../domain", version = "0.1.0" }
+indexer-db = { path = "../db", version = "0.1.0" }
+indexer-chain = { path = "../chain", version = "0.1.0" }
+
+# alloy: log filtering + ABI event decode via sol! macro.
+alloy-primitives.workspace = true
+alloy-rpc-types.workspace = true
+alloy-sol-types.workspace = true
+
+# DB transaction handle.
+sqlx.workspace = true
+
+# Async + cancellation.
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
+tokio-util = { workspace = true, features = ["rt"] }
+
+# Logging + errors.
+tracing.workspace = true
+thiserror.workspace = true
+
+# Hex-encode addresses + tx hashes for storage strings.
+hex.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }

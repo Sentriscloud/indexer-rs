@@ -8,6 +8,8 @@
 #![cfg_attr(not(test), warn(missing_docs))]
 
 pub mod blocks;
+pub mod cb_tokens;
+pub mod cb_trades;
 pub mod logs;
 pub mod meta;
 pub mod token_transfers;
