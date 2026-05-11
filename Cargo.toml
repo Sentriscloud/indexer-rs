@@ -48,9 +48,11 @@ sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "macro
 alloy-primitives = "0.8"
 alloy-provider = "0.7"
 alloy-rpc-types = "0.7"
+alloy-transport-http = "0.7"
 
 # gRPC
-tonic = { version = "0.14", features = ["tls", "tls-roots"] }
+tonic = { version = "0.14", features = ["tls-ring", "tls-native-roots"] }
+tonic-prost = "0.14"
 prost = "0.14"
 
 # HTTP server / client
@@ -82,6 +84,8 @@ sha2 = "0.10"
 
 # Build deps
 tonic-build = "0.14"
+tonic-prost-build = "0.14"
+prost-build = "0.14"
 
 [profile.release]
 opt-level = 3

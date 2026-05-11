@@ -6,5 +6,41 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+build = "build.rs"
 
 [dependencies]
+indexer-domain = { path = "../domain" }
+
+# alloy: EVM JSON-RPC client.
+alloy-primitives.workspace = true
+alloy-provider.workspace = true
+alloy-rpc-types.workspace = true
+alloy-transport-http.workspace = true
+
+# tonic: gRPC client (generated from proto).
+tonic.workspace = true
+tonic-prost.workspace = true
+prost.workspace = true
+
+# REST client for native `/tx/<hash>` fetch.
+reqwest = { workspace = true }
+
+# Serde for native REST shapes.
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+# Async runtime + utilities.
+tokio.workspace = true
+futures.workspace = true
+
+# Logging + errors.
+tracing.workspace = true
+thiserror.workspace = true
+
+[build-dependencies]
+tonic-build.workspace = true
+tonic-prost-build.workspace = true
+prost-build.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }

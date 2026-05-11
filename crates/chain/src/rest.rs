@@ -1,0 +1,111 @@
+//! Native REST client for the chain's `/tx/<hash>` endpoint.
+//!
+//! The EVM JSON-RPC view of a tx omits Sentrix-native fields (tx_type,
+//! nonce semantics for system/coinbase tx, justification context). The
+//! native REST endpoint at `${RPC_HOST}/tx/<hash>` returns the canonical
+//! shape. The sync layer calls this for every tx the JSON-RPC layer doesn't
+//! cover fully (Phase 3+).
+
+use crate::error::{ChainError, ChainResult};
+use indexer_domain::Hash;
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
+
+/// Subset of the native `/tx/<hash>` response shape that the indexer needs.
+/// Extra fields the chain may emit are ignored on decode.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct NativeTxResponse {
+    /// Tx hash (echoed back).
+    pub txid: String,
+    /// Sender address.
+    pub from_address: String,
+    /// Receiver address. None for contract creation / system tx.
+    pub to_address: Option<String>,
+    /// Sentri amount (chain-native unit).
+    pub amount: u64,
+    /// Sentri fee.
+    pub fee: u64,
+    /// Sender nonce.
+    pub nonce: u64,
+    /// Block timestamp seconds.
+    pub timestamp: u64,
+    /// Block height the tx is included in.
+    pub block_height: u64,
+    /// Tx kind: native | evm | system | coinbase.
+    pub tx_type: String,
+    /// Hex-encoded data field (calldata for EVM, payload for native ops).
+    pub data: Option<String>,
+}
+
+/// Native REST client.
+#[derive(Debug, Clone)]
+pub struct RestClient {
+    base: String,
+    http: reqwest::Client,
+}
+
+impl RestClient {
+    /// Build a client pointing at the chain's HTTP base URL (no trailing
+    /// `/tx/...`). Default 10s request timeout.
+    pub fn new(base_url: impl Into<String>) -> ChainResult<Self> {
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()?;
+        Ok(Self {
+            base: base_url.into().trim_end_matches('/').to_owned(),
+            http,
+        })
+    }
+
+    /// Fetch a tx by hash. Returns None on 404 so the caller can decide
+    /// whether to retry (chain hasn't seen it yet) vs surface as missing.
+    pub async fn tx(&self, hash: &Hash) -> ChainResult<Option<NativeTxResponse>> {
+        let url = format!("{}/tx/{}", self.base, hash);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ChainError::Rpc(format!("native rest {status}: {body}")));
+        }
+        let body = resp.bytes().await?;
+        let parsed: NativeTxResponse = serde_json::from_slice(&body)?;
+        Ok(Some(parsed))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decodes_minimal_response() {
+        let raw = r#"{
+            "txid": "0xabc",
+            "from_address": "0x1111111111111111111111111111111111111111",
+            "to_address": "0x2222222222222222222222222222222222222222",
+            "amount": 100000000,
+            "fee": 10000,
+            "nonce": 1,
+            "timestamp": 1700000000,
+            "block_height": 12345,
+            "tx_type": "native",
+            "data": null,
+            "extra_field_we_ignore": "ok"
+        }"#;
+        let parsed: NativeTxResponse = serde_json::from_str(raw).unwrap();
+        assert_eq!(parsed.txid, "0xabc");
+        assert_eq!(parsed.amount, 100_000_000);
+        assert_eq!(parsed.tx_type, "native");
+        assert!(parsed.data.is_none());
+    }
+
+    #[test]
+    fn rejects_missing_required_field() {
+        let raw = r#"{ "txid": "0xabc" }"#;
+        assert!(serde_json::from_str::<NativeTxResponse>(raw).is_err());
+    }
+}
