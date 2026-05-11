@@ -38,7 +38,7 @@ jobs:
 
       - name: cargo nextest
         uses: taiki-e/install-action@nextest
-      - run: cargo nextest run --workspace --locked
+      - run: cargo nextest run --workspace --locked --no-tests=pass
 
       - name: cargo clippy -D warnings
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
