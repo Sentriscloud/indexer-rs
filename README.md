@@ -14,7 +14,7 @@ Rust rewrite of the [Sentriscloud/indexer](https://github.com/Sentriscloud/index
 
 ## Spec
 
-Full design in `founder-private/SPEC_INDEXER_RUST.md` (operator-only). 20 sections, 10-pass internal review, every phase has acceptance criteria.
+Full design lives in the operator-private spec — 20 sections, 10-pass internal review, every phase has acceptance criteria.
 
 ## Workspace
 
