@@ -1,0 +1,40 @@
+/target
+**/*.rs.bk
+Cargo.lock.bak*
+
+# sqlx offline metadata is checked in EXCEPT during local dev
+# .sqlx/ IS committed for CI offline builds
+
+# Build artifacts
+*.pdb
+*.exe
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.zed/
+
+# Env files (commit .env.example only)
+.env
+.env.local
+.env.production
+
+# Local data + caches
+/data/
+/.docker/
+/clickhouse-data/
+/pg-data/
+/redis-data/
+
+# Snapshots: ingest is large, kept out of git; api goldens stay in
+/snapshots/ingest/golden/*.sql
+/snapshots/schema/*.sql
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

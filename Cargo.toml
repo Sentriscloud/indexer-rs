@@ -1,0 +1,94 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/domain",
+    "crates/db",
+    "crates/chain",
+    "crates/handlers",
+    "crates/coinblast",
+    "crates/sync",
+    "crates/cache",
+    "crates/analytics",
+    "crates/api",
+    "bin",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "BUSL-1.1"
+repository = "https://github.com/Sentriscloud/indexer-rs"
+authors = ["Sentriscloud <ops@sentriscloud.com>"]
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.40", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging + tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+
+# Config
+figment = { version = "0.10", features = ["env", "toml"] }
+
+# Serde
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "macros", "migrate", "chrono", "bigdecimal", "uuid"] }
+
+# Chain types (alloy)
+alloy-primitives = "0.8"
+alloy-provider = "0.7"
+alloy-rpc-types = "0.7"
+
+# gRPC
+tonic = { version = "0.14", features = ["tls", "tls-roots"] }
+prost = "0.14"
+
+# HTTP server / client
+axum = { version = "0.8", features = ["macros", "tracing"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "timeout"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Redis
+fred = { version = "9", features = ["enable-rustls-ring"] }
+
+# ClickHouse
+clickhouse = { version = "0.13", features = ["uuid", "time"] }
+
+# GraphQL
+async-graphql = { version = "7", features = ["chrono", "uuid"] }
+async-graphql-axum = "7"
+
+# Metrics
+metrics = "0.24"
+metrics-exporter-prometheus = "0.16"
+
+# Utilities
+futures = "0.3"
+parking_lot = "0.12"
+ahash = "0.8"
+hex = "0.4"
+sha2 = "0.10"
+
+# Build deps
+tonic-build = "0.14"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.dev]
+opt-level = 0
+debug = true
