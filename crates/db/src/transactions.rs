@@ -35,6 +35,22 @@ where
     Ok(())
 }
 
+/// All txs in a block, ordered by `tx_index`.
+pub async fn for_block(pool: &PgPool, h: BlockHeight) -> DbResult<Vec<Transaction>> {
+    let rows = sqlx::query(
+        "SELECT hash, block_height, tx_index, from_addr, to_addr, value, gas_limit, gas_used, \
+                gas_price, fee, nonce, data, status, contract_address, tx_type \
+         FROM transactions WHERE block_height = $1 ORDER BY tx_index ASC",
+    )
+    .bind(h)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter()
+        .map(row_to_tx)
+        .collect::<Result<_, _>>()
+        .map_err(Into::into)
+}
+
 /// Look up a tx by hash.
 pub async fn get_by_hash(pool: &PgPool, hash: &Hash) -> DbResult<Option<Transaction>> {
     let row_opt = sqlx::query(

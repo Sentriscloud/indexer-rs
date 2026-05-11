@@ -71,6 +71,43 @@ pub async fn get_by_hash(pool: &PgPool, hash: &Hash) -> DbResult<Option<Block>> 
     Ok(row_opt.map(row_to_block).transpose()?)
 }
 
+/// Paginated block list, newest-first. `before` (inclusive upper bound on
+/// height) is None for the first page; subsequent pages pass the lowest
+/// returned height minus 1.
+pub async fn list_before(
+    pool: &PgPool,
+    before: Option<BlockHeight>,
+    limit: i64,
+) -> DbResult<Vec<Block>> {
+    let rows = match before {
+        Some(b) => {
+            sqlx::query(
+                "SELECT height, hash, parent_hash, timestamp, validator, gas_used, gas_limit, \
+                    base_fee, tx_count, state_root, round, justification_signers \
+             FROM blocks WHERE height <= $1 ORDER BY height DESC LIMIT $2",
+            )
+            .bind(b)
+            .bind(limit)
+            .fetch_all(pool)
+            .await?
+        }
+        None => {
+            sqlx::query(
+                "SELECT height, hash, parent_hash, timestamp, validator, gas_used, gas_limit, \
+                    base_fee, tx_count, state_root, round, justification_signers \
+             FROM blocks ORDER BY height DESC LIMIT $1",
+            )
+            .bind(limit)
+            .fetch_all(pool)
+            .await?
+        }
+    };
+    rows.into_iter()
+        .map(row_to_block)
+        .collect::<Result<_, _>>()
+        .map_err(Into::into)
+}
+
 /// Latest indexed block height. Returns None on empty table.
 pub async fn latest_height(pool: &PgPool) -> DbResult<Option<BlockHeight>> {
     let row_opt = sqlx::query("SELECT MAX(height) AS h FROM blocks")

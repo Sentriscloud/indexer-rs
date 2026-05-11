@@ -8,3 +8,25 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+indexer-domain = { path = "../domain", version = "0.1.0" }
+indexer-db = { path = "../db", version = "0.1.0" }
+
+# HTTP server.
+axum.workspace = true
+tower = { workspace = true }
+tower-http = { workspace = true, features = ["cors", "trace", "timeout"] }
+
+# Serde — response shapes.
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+# Async + sqlx.
+tokio = { workspace = true, features = ["rt", "macros"] }
+sqlx.workspace = true
+
+# Logging + errors.
+tracing.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
