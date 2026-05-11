@@ -8,3 +8,15 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+indexer-domain = { path = "../domain", version = "0.1.0" }
+
+clickhouse.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
+tokio-util = { workspace = true, features = ["rt"] }
+parking_lot.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }

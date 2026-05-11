@@ -8,3 +8,13 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+fred.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "rt"] }
+parking_lot.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }

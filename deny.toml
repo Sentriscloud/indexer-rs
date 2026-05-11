@@ -40,6 +40,9 @@ ignore = [
     # archived the repo. Track upstream displacement; remove when our
     # dep tree no longer pulls it.
     "RUSTSEC-2024-0436",
+    # `rustls-pemfile` is deprecated in favour of `rustls-pki-types`; pulled
+    # transitively by reqwest -> rustls. No vulnerability.
+    "RUSTSEC-2025-0134",
 ]
 
 [sources]
