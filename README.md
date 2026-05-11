@@ -103,6 +103,8 @@ REST (snake_case keys, bigint stringified, mirrors TS Fastify port):
 | `GET /tx/:hash` | Transaction detail with logs |
 | `GET /address/:addr/txs?limit` | Address tx history |
 | `GET /address/:addr/transfers?limit&standard` | Token-transfer history |
+| `GET /accounts/active?limit` | Top senders by tx count |
+| `GET /whale/transfers?limit` | Top txs by `value` |
 
 GraphQL:
 
