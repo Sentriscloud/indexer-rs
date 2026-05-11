@@ -2569,8 +2569,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "clickhouse",
  "figment",
  "futures",
+ "indexer-analytics",
  "indexer-api",
  "indexer-chain",
  "indexer-coinblast",

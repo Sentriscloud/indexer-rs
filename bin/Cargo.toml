@@ -21,7 +21,10 @@ indexer-db = { path = "../crates/db", version = "0.1.0" }
 indexer-chain = { path = "../crates/chain", version = "0.1.0" }
 indexer-sync = { path = "../crates/sync", version = "0.1.0" }
 indexer-coinblast = { path = "../crates/coinblast", version = "0.1.0" }
+indexer-analytics = { path = "../crates/analytics", version = "0.1.0" }
 indexer-api = { path = "../crates/api", version = "0.1.0" }
+
+clickhouse.workspace = true
 
 # Runtime + signals.
 tokio = { workspace = true, features = ["full"] }

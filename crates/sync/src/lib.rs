@@ -34,6 +34,7 @@ mod convert;
 pub use backfill::run_backfill;
 pub use cursor::{LAST_SYNCED_HEIGHT_KEY, read_cursor, write_cursor};
 pub use single_flight::SingleFlight;
+pub use tail::{TailExit, run_tail};
 
 use indexer_domain::BlockHeight;
 use std::time::Duration;

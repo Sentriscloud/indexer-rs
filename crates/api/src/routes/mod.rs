@@ -2,6 +2,7 @@
 //! `axum::Router<crate::SharedState>` so [`crate::make_router`] can compose
 //! them with `.merge`.
 
+pub mod address;
 pub mod blocks;
 pub mod health;
 pub mod tx;

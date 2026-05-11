@@ -1,11 +1,13 @@
 //! sentrix-indexer-rs — sync + CoinBlast worker daemon.
 //!
 //! Reads `DATABASE_URL`, `RPC_URL` (chain JSON-RPC), `GRPC_URL`
-//! (chain gRPC, optional — disables tail loop when absent), and
-//! `INDEXER_NETWORK` (`mainnet` | `testnet`) from env. Spawns:
+//! (chain gRPC, optional — disables tail loop when absent),
+//! `INDEXER_NETWORK` (`mainnet` | `testnet`), and optional
+//! `CLICKHOUSE_URL` (enables the analytics flusher) from env. Spawns:
 //!  - chain-wide backfill loop (always)
-//!  - chain-wide tail loop (if GRPC_URL set; deferred wiring)
+//!  - chain-wide tail loop (if GRPC_URL set)
 //!  - CoinBlast worker (always)
+//!  - analytics flusher (if CLICKHOUSE_URL set)
 //!
 //! All workers share a `CancellationToken`; SIGTERM / Ctrl-C cancels and
 //! the task waits for in-flight commits before exiting (spec §5 invariant 9).
@@ -13,12 +15,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use clickhouse::Client as ChClient;
 use figment::Figment;
 use figment::providers::Env;
-use indexer_chain::ChainProvider;
+use indexer_analytics::run_flusher;
+use indexer_chain::{ChainProvider, GrpcClient};
 use indexer_coinblast::{Network, WorkerConfig as CbConfig, run_coinblast_worker};
 use indexer_db::{PoolConfig, connect, migrate};
-use indexer_sync::{SingleFlight, SyncConfig, run_backfill};
+use indexer_sync::{SingleFlight, SyncConfig, TailExit, run_backfill, run_tail};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
@@ -28,24 +32,34 @@ struct IndexerConfig {
     rpc_url: String,
     #[serde(default)]
     grpc_url: Option<String>,
+    #[serde(default)]
+    clickhouse_url: Option<String>,
+    #[serde(default = "default_clickhouse_table")]
+    clickhouse_raw_tx_table: String,
     #[serde(default = "default_network")]
     indexer_network: String,
     #[serde(default = "default_max_connections")]
     indexer_pg_max_connections: u32,
     #[serde(default = "default_backfill_loop_interval_secs")]
     indexer_backfill_loop_secs: u64,
+    #[serde(default = "default_analytics_flush_secs")]
+    indexer_analytics_flush_secs: u64,
 }
 
 fn default_network() -> String {
     "testnet".to_string()
 }
-
 fn default_max_connections() -> u32 {
     10
 }
-
 fn default_backfill_loop_interval_secs() -> u64 {
     5
+}
+fn default_clickhouse_table() -> String {
+    "raw_tx".to_string()
+}
+fn default_analytics_flush_secs() -> u64 {
+    15
 }
 
 #[tokio::main]
@@ -62,6 +76,7 @@ async fn main() -> anyhow::Result<()> {
         network = ?network,
         rpc_url = %cfg.rpc_url,
         grpc_url = ?cfg.grpc_url,
+        clickhouse_url = ?cfg.clickhouse_url,
         "indexer: booting",
     );
 
@@ -72,6 +87,26 @@ async fn main() -> anyhow::Result<()> {
 
     let provider = ChainProvider::http(&cfg.rpc_url)?;
     let cancel = CancellationToken::new();
+
+    // Analytics flusher (optional). Spawn first so the handle is ready when
+    // the sync layer wires its callback (the actual push-on-commit hookup
+    // is a follow-up; this scaffolds the flusher + final-drain machinery).
+    let analytics_join = match cfg.clickhouse_url.as_deref() {
+        Some(url) => {
+            let ch = ChClient::default().with_url(url);
+            let (_handle, join) = run_flusher(
+                ch,
+                cfg.clickhouse_raw_tx_table.clone(),
+                Duration::from_secs(cfg.indexer_analytics_flush_secs),
+                cancel.clone(),
+            );
+            Some(join)
+        }
+        None => {
+            tracing::info!("CLICKHOUSE_URL unset; analytics flusher disabled");
+            None
+        }
+    };
 
     // Backfill loop on a tokio interval. Each tick re-reads the cursor +
     // walks forward; bookkeeping idempotent.
@@ -96,8 +131,67 @@ async fn main() -> anyhow::Result<()> {
         })
     };
 
-    // CoinBlast worker has its own cursor + chunked scan loop. Runs in
-    // parallel; both share the cancellation token.
+    // Tail loop (gRPC StreamEvents) — runs in parallel with backfill,
+    // closes the cold-start gap then handles every new tip via SingleFlight.
+    let gate = Arc::new(SingleFlight::new());
+    let tail_handle = match cfg.grpc_url.clone() {
+        Some(url) => {
+            let pool = pool.clone();
+            let provider = provider.clone();
+            let cancel = cancel.clone();
+            let gate = gate.clone();
+            Some(tokio::spawn(async move {
+                let sync_cfg = SyncConfig::default();
+                loop {
+                    if cancel.is_cancelled() {
+                        return Ok::<(), anyhow::Error>(());
+                    }
+                    let mut grpc = match GrpcClient::connect(url.clone()).await {
+                        Ok(c) => c,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "tail: gRPC connect failed; retrying in 5s");
+                            tokio::time::sleep(Duration::from_secs(5)).await;
+                            continue;
+                        }
+                    };
+                    match run_tail(
+                        &pool,
+                        &provider,
+                        &mut grpc,
+                        &sync_cfg,
+                        gate.clone(),
+                        cancel.clone(),
+                    )
+                    .await
+                    {
+                        Ok(TailExit::Cancelled) => return Ok(()),
+                        Ok(TailExit::Lagged) => {
+                            // Backfill loop will re-sync the gap on its next
+                            // tick; we just reconnect.
+                            tracing::warn!(
+                                "tail: stream Lagged; reconnecting after backfill catch-up"
+                            );
+                            tokio::time::sleep(Duration::from_secs(2)).await;
+                        }
+                        Ok(TailExit::StreamEnded) => {
+                            tracing::warn!("tail: stream ended; reconnecting in 2s");
+                            tokio::time::sleep(Duration::from_secs(2)).await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "tail: failed; reconnecting in 5s");
+                            tokio::time::sleep(Duration::from_secs(5)).await;
+                        }
+                    }
+                }
+            }))
+        }
+        None => {
+            tracing::info!("GRPC_URL unset; tail loop disabled (backfill carries the load)");
+            None
+        }
+    };
+
+    // CoinBlast worker has its own cursor + chunked scan loop.
     let coinblast_handle = {
         let pool = pool.clone();
         let provider = provider.clone();
@@ -110,23 +204,20 @@ async fn main() -> anyhow::Result<()> {
         })
     };
 
-    // tail loop hook-up (gRPC StreamEvents) — wired only if GRPC_URL set.
-    // Until then the backfill loop carries the load via its own re-tick
-    // cadence. SingleFlight gate is constructed up-front so future tail
-    // wiring slots in without rewiring backfill.
-    let _gate = Arc::new(SingleFlight::new());
-    if cfg.grpc_url.is_some() {
-        tracing::warn!(
-            "GRPC_URL set but tail loop wiring is deferred; backfill loop carries the load"
-        );
-    }
-
     shutdown_signal().await;
     tracing::info!("indexer: shutdown signal received; cancelling workers");
     cancel.cancel();
 
     let _ = backfill_handle.await?;
     let _ = coinblast_handle.await?;
+    if let Some(t) = tail_handle {
+        let _ = t.await?;
+    }
+    if let Some(a) = analytics_join
+        && let Err(e) = a.await?
+    {
+        tracing::warn!(error = %e, "analytics flusher exited with error");
+    }
     tracing::info!("indexer: shutdown complete");
     Ok(())
 }

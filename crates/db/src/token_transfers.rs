@@ -30,6 +30,47 @@ where
     Ok(())
 }
 
+/// Paginated token-transfer history for an address — transfers where the
+/// address is sender OR receiver, newest-first by block height. Optional
+/// `standard` narrows to a specific token kind ("erc20" / "erc721" /
+/// "erc1155"). Mirrors the TS `/address/:addr/transfers` route.
+pub async fn for_address(
+    pool: &PgPool,
+    addr: &str,
+    standard: Option<&str>,
+    limit: i64,
+) -> DbResult<Vec<TokenTransfer>> {
+    let rows = match standard {
+        Some(s) => sqlx::query(
+            "SELECT id, block_height, tx_hash, log_index, contract, standard, from_addr, to_addr, \
+                    token_id, amount \
+             FROM token_transfers \
+             WHERE (from_addr = $1 OR to_addr = $1) AND standard = $2 \
+             ORDER BY block_height DESC LIMIT $3",
+        )
+        .bind(addr)
+        .bind(s)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?,
+        None => sqlx::query(
+            "SELECT id, block_height, tx_hash, log_index, contract, standard, from_addr, to_addr, \
+                    token_id, amount \
+             FROM token_transfers \
+             WHERE from_addr = $1 OR to_addr = $1 \
+             ORDER BY block_height DESC LIMIT $2",
+        )
+        .bind(addr)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?,
+    };
+    rows.into_iter()
+        .map(row_to_transfer)
+        .collect::<Result<_, _>>()
+        .map_err(Into::into)
+}
+
 /// All transfers for a given block, ordered by `log_index`.
 pub async fn for_block(pool: &PgPool, h: BlockHeight) -> DbResult<Vec<TokenTransfer>> {
     let rows = sqlx::query(

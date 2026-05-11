@@ -4,7 +4,7 @@
 //! timestamps / gas / nonce render as strings (so they survive JSON's f64
 //! precision limit on the wire).
 
-use indexer_domain::{Block, Log, Transaction, Wei};
+use indexer_domain::{Block, Log, TokenTransfer, Transaction, Wei};
 use serde::Serialize;
 
 /// Wire shape of a Block. Matches `serialiseBlock` in the TS port.
@@ -151,6 +151,49 @@ impl From<&Log> for WireLog {
             address: l.address.clone(),
             topics,
             data: l.data.clone(),
+        }
+    }
+}
+
+/// Wire shape of a TokenTransfer. Matches the TS port's row shape — `id` is
+/// the PG identity, lowercase addresses, decimal-string amounts.
+#[derive(Debug, Serialize)]
+pub struct WireTransfer {
+    /// PG-assigned surrogate.
+    pub id: Option<i64>,
+    /// `bigint` block height as decimal string.
+    pub block_height: String,
+    /// 0x-prefixed tx hash that emitted the transfer.
+    pub tx_hash: String,
+    /// Block-wide log index.
+    pub log_index: i32,
+    /// Token contract.
+    pub contract: String,
+    /// erc20 / erc721 / erc1155.
+    pub standard: &'static str,
+    /// 0x-prefixed sender.
+    pub from_addr: String,
+    /// 0x-prefixed receiver.
+    pub to_addr: String,
+    /// `numeric(78, 0)` token id; null for erc20.
+    pub token_id: Option<Wei>,
+    /// `numeric(78, 0)` amount.
+    pub amount: Wei,
+}
+
+impl From<&TokenTransfer> for WireTransfer {
+    fn from(t: &TokenTransfer) -> Self {
+        Self {
+            id: t.id,
+            block_height: t.block_height.0.to_string(),
+            tx_hash: t.tx_hash.clone(),
+            log_index: t.log_index.0,
+            contract: t.contract.clone(),
+            standard: t.standard.as_str(),
+            from_addr: t.from_addr.clone(),
+            to_addr: t.to_addr.clone(),
+            token_id: t.token_id,
+            amount: t.amount,
         }
     }
 }

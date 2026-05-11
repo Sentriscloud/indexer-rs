@@ -64,6 +64,27 @@ pub async fn get_by_hash(pool: &PgPool, hash: &Hash) -> DbResult<Option<Transact
     row_opt.map(row_to_tx).transpose().map_err(Into::into)
 }
 
+/// Paginated tx history for an address — txs where the address is sender
+/// OR receiver, newest-first by block height. Mirrors the TS port's
+/// `/address/:addr/txs` route. Address is matched lowercase (caller
+/// normalises).
+pub async fn for_address(pool: &PgPool, addr: &str, limit: i64) -> DbResult<Vec<Transaction>> {
+    let rows = sqlx::query(
+        "SELECT hash, block_height, tx_index, from_addr, to_addr, value, gas_limit, gas_used, \
+                gas_price, fee, nonce, data, status, contract_address, tx_type \
+         FROM transactions WHERE from_addr = $1 OR to_addr = $1 \
+         ORDER BY block_height DESC LIMIT $2",
+    )
+    .bind(addr)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter()
+        .map(row_to_tx)
+        .collect::<Result<_, _>>()
+        .map_err(Into::into)
+}
+
 /// Cascade-delete txs for a given block (reorg rewind).
 ///
 /// FK ON DELETE CASCADE handles dependent `logs` rows; the caller drops the
