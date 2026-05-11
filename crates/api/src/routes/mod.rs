@@ -5,8 +5,10 @@
 pub mod address;
 pub mod blocks;
 pub mod coinblast;
+pub mod etherscan;
 pub mod health;
 pub mod leaderboards;
+pub mod stats;
 pub mod tx;
 
 const DEFAULT_LIMIT: i64 = 25;

@@ -24,6 +24,10 @@ struct ApiConfig {
     indexer_api_bind: String,
     #[serde(default = "default_max_connections")]
     indexer_api_max_connections: u32,
+    /// Optional bearer token. When set, every route except /health requires
+    /// `Authorization: Bearer <this>`. Unset = open API (Caddy out front).
+    #[serde(default)]
+    indexer_api_bearer_token: Option<String>,
 }
 
 fn default_bind() -> String {
@@ -49,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
     pool_cfg.max_connections = cfg.indexer_api_max_connections;
     let pool = connect(&pool_cfg).await?;
 
-    let app = make_router(AppState { pool })
+    let app = make_router(AppState { pool }, cfg.indexer_api_bearer_token.clone())
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(30),

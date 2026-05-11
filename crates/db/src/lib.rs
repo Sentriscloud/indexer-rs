@@ -13,6 +13,7 @@ pub mod cb_tokens;
 pub mod cb_trades;
 pub mod logs;
 pub mod meta;
+pub mod stats;
 pub mod token_transfers;
 pub mod transactions;
 
