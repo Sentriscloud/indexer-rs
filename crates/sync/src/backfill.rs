@@ -11,9 +11,7 @@
 //! (the cursor never lands ahead of the data — spec §5 invariant 2).
 
 use crate::block_writer::{BlockBundle, write_block};
-use crate::convert::{
-    to_domain_block_from_native, to_domain_log, to_domain_txs_from_native,
-};
+use crate::convert::{to_domain_block_from_native, to_domain_log, to_domain_txs_from_native};
 use crate::cursor::read_cursor;
 use crate::{SyncConfig, SyncError, SyncResult};
 use indexer_analytics::AnalyticsHandle;

@@ -74,7 +74,11 @@ pub fn to_domain_block_from_native(b: &NativeBlockResponse) -> Result<DomBlock, 
     }
     let tx_count = i32::try_from(b.transactions.len())
         .map_err(|_| ConvertError::OutOfRange("tx_count".into()))?;
-    let state_root = b.state_root.as_ref().filter(|r| !r.is_empty()).map(|r| hex_hash(r));
+    let state_root = b
+        .state_root
+        .as_ref()
+        .filter(|r| !r.is_empty())
+        .map(|r| hex_hash(r));
     Ok(DomBlock {
         height: BlockHeight(b.index),
         hash: with_0x(&b.hash),
@@ -113,8 +117,7 @@ fn convert_native_tx(
 ) -> Result<DomTx, ConvertError> {
     let tx_index =
         TxIndex(i32::try_from(idx).map_err(|_| ConvertError::OutOfRange("tx_index".into()))?);
-    let nonce =
-        i64::try_from(t.nonce).map_err(|_| ConvertError::OutOfRange("tx.nonce".into()))?;
+    let nonce = i64::try_from(t.nonce).map_err(|_| ConvertError::OutOfRange("tx.nonce".into()))?;
     let from_addr = if t.from_address == "COINBASE" {
         // The TS schema uses a lowercase sentinel; the historical row is
         // `from_addr = '0x0000...0000'`, `tx_type = 'coinbase'`. Match that
