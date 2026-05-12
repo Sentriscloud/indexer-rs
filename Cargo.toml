@@ -66,7 +66,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 fred = { version = "10", features = ["enable-rustls-ring"] }
 
 # ClickHouse
-clickhouse = { version = "0.13", features = ["uuid", "time"] }
+clickhouse = { version = "0.15", features = ["uuid", "time"] }
 
 # GraphQL
 async-graphql = { version = "7", features = ["chrono", "uuid"] }
