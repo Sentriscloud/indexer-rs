@@ -8,7 +8,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-indexer-domain = { path = "../domain", version = "0.2.0" }
+indexer-domain = { path = "../domain", version = "0.2.1" }
 
 clickhouse.workspace = true
 serde = { workspace = true, features = ["derive"] }

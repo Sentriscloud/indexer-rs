@@ -8,9 +8,9 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-indexer-domain = { path = "../domain", version = "0.2.0" }
-indexer-db = { path = "../db", version = "0.2.0" }
-indexer-cache = { path = "../cache", version = "0.2.0" }
+indexer-domain = { path = "../domain", version = "0.2.1" }
+indexer-db = { path = "../db", version = "0.2.1" }
+indexer-cache = { path = "../cache", version = "0.2.1" }
 
 # Prometheus metrics export.
 metrics.workspace = true

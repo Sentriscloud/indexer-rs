@@ -16,14 +16,14 @@ name = "api"
 path = "api.rs"
 
 [dependencies]
-indexer-domain = { path = "../crates/domain", version = "0.2.0" }
-indexer-db = { path = "../crates/db", version = "0.2.0" }
-indexer-chain = { path = "../crates/chain", version = "0.2.0" }
-indexer-sync = { path = "../crates/sync", version = "0.2.0" }
-indexer-coinblast = { path = "../crates/coinblast", version = "0.2.0" }
-indexer-analytics = { path = "../crates/analytics", version = "0.2.0" }
-indexer-api = { path = "../crates/api", version = "0.2.0" }
-indexer-cache = { path = "../crates/cache", version = "0.2.0" }
+indexer-domain = { path = "../crates/domain", version = "0.2.1" }
+indexer-db = { path = "../crates/db", version = "0.2.1" }
+indexer-chain = { path = "../crates/chain", version = "0.2.1" }
+indexer-sync = { path = "../crates/sync", version = "0.2.1" }
+indexer-coinblast = { path = "../crates/coinblast", version = "0.2.1" }
+indexer-analytics = { path = "../crates/analytics", version = "0.2.1" }
+indexer-api = { path = "../crates/api", version = "0.2.1" }
+indexer-cache = { path = "../crates/cache", version = "0.2.1" }
 
 clickhouse.workspace = true
 
