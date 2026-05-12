@@ -28,7 +28,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@e18b497796c1bb0f4b27f48d8eaf4196af0fc6fc # v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
@@ -37,7 +37,7 @@ jobs:
         run: cargo build --workspace --locked
 
       - name: cargo nextest
-        uses: taiki-e/install-action@da71d5095c1b85ef82a01c43e83fa99ddec7c7a4 # nextest
+        uses: taiki-e/install-action@da71d5095c1b175e60393b8d36727208ae905210 # nextest
       - run: cargo nextest run --workspace --locked --no-tests=pass
 
       - name: cargo clippy -D warnings
@@ -49,7 +49,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@6c8f9facfa50f193b0d8d6c6f4a05aa3f1b7c8c0 # v2
+      - uses: EmbarkStudios/cargo-deny-action@6c8f9facfa5047ec02d8485b6bf52b587b7777d1 # v2
         with:
           command: check
           arguments: --all-features
