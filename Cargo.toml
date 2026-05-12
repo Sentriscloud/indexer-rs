@@ -74,7 +74,7 @@ async-graphql-axum = "7"
 
 # Metrics
 metrics = "0.24"
-metrics-exporter-prometheus = "0.16"
+metrics-exporter-prometheus = "0.18"
 
 # Utilities
 futures = "0.3"
