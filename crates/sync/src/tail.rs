@@ -20,7 +20,7 @@ use crate::single_flight::{Offer, SingleFlight};
 use crate::{SyncConfig, SyncError, SyncResult, backfill};
 use indexer_analytics::AnalyticsHandle;
 use indexer_chain::pb;
-use indexer_chain::{BackoffConfig, ChainProvider, GrpcClient};
+use indexer_chain::{BackoffConfig, ChainProvider, GrpcClient, RestClient};
 use indexer_db::PgPool;
 use indexer_domain::BlockHeight;
 use std::sync::Arc;
@@ -41,9 +41,11 @@ pub enum TailExit {
 
 /// Run the tail loop. Returns when the stream ends, the cancellation token
 /// fires, or a Lagged sentinel arrives.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_tail(
     pool: &PgPool,
     provider: &ChainProvider,
+    rest: &RestClient,
     grpc: &mut GrpcClient,
     cfg: &SyncConfig,
     gate: Arc<SingleFlight>,
@@ -75,7 +77,7 @@ pub async fn run_tail(
                             let Some(tip) = b.block.map(|blk| BlockHeight::from(blk.index)) else {
                                 continue;
                             };
-                            handle_finalized(pool, provider, cfg, &gate, backoff, tip, analytics).await?;
+                            handle_finalized(pool, provider, rest, cfg, &gate, backoff, tip, analytics).await?;
                         }
                         Some(Lagged(_)) => return Ok(TailExit::Lagged),
                         Some(PendingTx(_) | ValidatorSetChange(_) | Log(_)) | None => {
@@ -92,9 +94,11 @@ pub async fn run_tail(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_finalized(
     pool: &PgPool,
     provider: &ChainProvider,
+    rest: &RestClient,
     cfg: &SyncConfig,
     gate: &SingleFlight,
     backoff: BackoffConfig,
@@ -111,7 +115,7 @@ async fn handle_finalized(
         if cap > cursor.0 {
             let mut h = BlockHeight(cursor.0 + 1);
             while h.0 <= cap {
-                backfill::ingest_one(pool, provider, h, backoff, analytics).await?;
+                backfill::ingest_one(pool, provider, rest, h, backoff, analytics).await?;
                 h = BlockHeight(h.0 + 1);
             }
         }

@@ -19,7 +19,7 @@ use clickhouse::Client as ChClient;
 use figment::Figment;
 use figment::providers::Env;
 use indexer_analytics::run_flusher;
-use indexer_chain::{ChainProvider, GrpcClient};
+use indexer_chain::{ChainProvider, GrpcClient, RestClient};
 use indexer_coinblast::{Network, WorkerConfig as CbConfig, run_coinblast_worker};
 use indexer_db::{PoolConfig, connect, migrate};
 use indexer_sync::{SingleFlight, SyncConfig, TailExit, run_backfill, run_tail};
@@ -86,6 +86,10 @@ async fn main() -> anyhow::Result<()> {
     migrate(&pool).await?;
 
     let provider = ChainProvider::http(&cfg.rpc_url)?;
+    // Native REST client for `/chain/blocks/<n>` + `/tx/<hash>` — Sentrix's
+    // EVM JSON-RPC ignores `full=true` on getBlockByNumber, so block + tx
+    // ingest goes via the native REST path. Same host, different URL space.
+    let rest = RestClient::new(&cfg.rpc_url)?;
     let cancel = CancellationToken::new();
 
     // Analytics flusher (optional). The handle threads into both the
@@ -112,6 +116,7 @@ async fn main() -> anyhow::Result<()> {
     let backfill_handle = {
         let pool = pool.clone();
         let provider = provider.clone();
+        let rest = rest.clone();
         let cancel = cancel.clone();
         let analytics = analytics_handle.clone();
         let interval = Duration::from_secs(cfg.indexer_backfill_loop_secs);
@@ -122,7 +127,7 @@ async fn main() -> anyhow::Result<()> {
                 tokio::select! {
                     _ = cancel.cancelled() => return Ok::<(), anyhow::Error>(()),
                     _ = tick.tick() => {
-                        if let Err(e) = run_backfill(&pool, &provider, &cfg, cancel.clone(), analytics.as_ref()).await {
+                        if let Err(e) = run_backfill(&pool, &provider, &rest, &cfg, cancel.clone(), analytics.as_ref()).await {
                             tracing::warn!(error = %e, "backfill loop iteration failed");
                         }
                     }
@@ -138,6 +143,7 @@ async fn main() -> anyhow::Result<()> {
         Some(url) => {
             let pool = pool.clone();
             let provider = provider.clone();
+            let rest = rest.clone();
             let cancel = cancel.clone();
             let gate = gate.clone();
             let analytics = analytics_handle.clone();
@@ -158,6 +164,7 @@ async fn main() -> anyhow::Result<()> {
                     match run_tail(
                         &pool,
                         &provider,
+                        &rest,
                         &mut grpc,
                         &sync_cfg,
                         gate.clone(),
