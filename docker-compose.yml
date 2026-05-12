@@ -39,7 +39,10 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "pgrep indexer >/dev/null"]
+      # `pgrep` isn't in debian-bookworm-slim, and adding procps just for a
+      # healthcheck is wasted bytes. `/proc/1/comm` always exists in Linux
+      # and the binary runs as PID 1 (no shell wrapper).
+      test: ["CMD-SHELL", "[ \"$$(cat /proc/1/comm)\" = indexer ]"]
       interval: 30s
       timeout: 5s
       retries: 5
