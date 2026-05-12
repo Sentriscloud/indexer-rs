@@ -17,7 +17,7 @@ metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
 
 # Per-IP rate-limit (governor token bucket via tower-governor).
-tower_governor = "0.7"
+tower_governor = "0.8"
 
 # HTTP server.
 axum.workspace = true
