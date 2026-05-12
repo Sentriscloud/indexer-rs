@@ -13,16 +13,14 @@ use crate::error::{ChainError, ChainResult, rpc_err};
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rpc_types::{
-    Block, BlockNumberOrTag, BlockTransactionsKind, Filter, Log, TransactionInput,
-    TransactionRequest,
+    Block, BlockNumberOrTag, Filter, Log, TransactionInput, TransactionRequest,
 };
-use alloy_transport_http::Http;
 use indexer_domain::BlockHeight;
 
-/// Concrete provider type — alloy's HTTP transport over reqwest. Hidden
-/// from callers behind [`ChainProvider`]; exposed via [`ChainProvider::raw`]
-/// for advanced use.
-pub type HttpProvider = RootProvider<Http<reqwest::Client>>;
+/// Concrete provider type — alloy 2.0's default HTTP transport (reqwest).
+/// Hidden from callers behind [`ChainProvider`]; exposed via
+/// [`ChainProvider::raw`] for advanced use.
+pub type HttpProvider = RootProvider;
 
 /// Thin wrapper around an alloy `RootProvider` keyed to a single Sentrix
 /// JSON-RPC endpoint. Cheap to clone (the underlying provider is `Arc`-y).
@@ -37,7 +35,9 @@ impl ChainProvider {
         let url = url
             .parse::<reqwest::Url>()
             .map_err(|e| ChainError::InvalidArgument(format!("bad rpc url: {e}")))?;
-        let inner = ProviderBuilder::new().on_http(url);
+        let inner = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .connect_http(url);
         Ok(Self { inner })
     }
 
@@ -62,7 +62,8 @@ impl ChainProvider {
     pub async fn block_with_txs(&self, h: BlockHeight) -> ChainResult<Option<Block>> {
         let tag = BlockNumberOrTag::Number(h.as_u64());
         self.inner
-            .get_block_by_number(tag, BlockTransactionsKind::Full)
+            .get_block_by_number(tag)
+            .full()
             .await
             .map_err(rpc_err)
     }
@@ -98,6 +99,6 @@ impl ChainProvider {
         let req = TransactionRequest::default()
             .to(to)
             .input(TransactionInput::new(data));
-        self.inner.call(&req).await.map_err(rpc_err)
+        self.inner.call(req).await.map_err(rpc_err)
     }
 }
