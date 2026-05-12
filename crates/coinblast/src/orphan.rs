@@ -106,9 +106,9 @@ const ZERO_ADDR: &str = "0x0000000000000000000000000000000000000000";
 async fn call_token(provider: &ChainProvider, addr: Address) -> CoinblastResult<Address> {
     let data = CoinBlastCurveViews::tokenCall {}.abi_encode();
     let raw = provider.call(addr, data.into()).await?;
-    let decoded = CoinBlastCurveViews::tokenCall::abi_decode_returns(&raw, true)
+    let decoded = CoinBlastCurveViews::tokenCall::abi_decode_returns(&raw)
         .map_err(|e| CoinblastError::Decode(e.to_string()))?;
-    Ok(decoded._0)
+    Ok(decoded)
 }
 
 async fn call_uint256(
@@ -132,9 +132,9 @@ async fn call_string(
     data: Vec<u8>,
 ) -> CoinblastResult<String> {
     let raw = provider.call(addr, data.into()).await?;
-    let decoded = Erc20Meta::nameCall::abi_decode_returns(&raw, true)
+    let decoded = Erc20Meta::nameCall::abi_decode_returns(&raw)
         .map_err(|e| CoinblastError::Decode(e.to_string()))?;
-    Ok(decoded._0)
+    Ok(decoded)
 }
 
 fn hex_addr(a: Address) -> String {

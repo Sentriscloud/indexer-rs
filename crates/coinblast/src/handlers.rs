@@ -153,7 +153,7 @@ fn decode<E: SolEvent>(l: &Log) -> CoinblastResult<E> {
     let topics: Vec<_> = l.topics().to_vec();
     let data = l.data().data.as_ref();
     let log_data = alloy_primitives::LogData::new_unchecked(topics, data.to_vec().into());
-    E::decode_log_data(&log_data, true).map_err(|e| CoinblastError::Decode(e.to_string()))
+    E::decode_log_data(&log_data).map_err(|e| CoinblastError::Decode(e.to_string()))
 }
 
 fn require_block_number(l: &Log) -> CoinblastResult<i64> {
