@@ -1,0 +1,29 @@
+language: en-US
+early_access: false
+reviews:
+  profile: assertive
+  high_level_summary: true
+  poem: false
+  review_status: false
+  changed_files_summary: false
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - "!**/target/**"
+    - "!**/node_modules/**"
+    - "!**/dist/**"
+    - "!**/*.lock"
+  path_instructions:
+    - path: "**/db/**"
+      instructions: |
+        Postgres / ClickHouse queries. Watch for:
+        - SQL injection: any string-concat into queries (must use parameterized).
+        - N+1 patterns inside loops.
+        - Unbounded SELECTs without LIMIT in user-facing endpoints.
+        - Missing transaction boundaries on multi-statement state changes.
+    - path: "**/handler*/**"
+      instructions: |
+        REST handlers. Watch for unauthenticated access to admin/private routes; rate-limit gaps.
+chat:
+  auto_reply: true
