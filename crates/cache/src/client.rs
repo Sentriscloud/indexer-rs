@@ -4,7 +4,7 @@
 
 use crate::breaker::CircuitBreaker;
 use crate::{CacheError, CacheResult};
-use fred::clients::RedisPool;
+use fred::clients::Pool;
 use fred::prelude::*;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -64,7 +64,7 @@ impl CacheConfig {
 /// High-level cache client. Cheap to clone (the pool + breaker are `Arc`-y).
 #[derive(Clone)]
 pub struct CacheClient {
-    pool: RedisPool,
+    pool: Pool,
     namespace: String,
     breaker: Arc<CircuitBreaker>,
 }
@@ -72,7 +72,7 @@ pub struct CacheClient {
 impl CacheClient {
     /// Connect a pooled Redis client + start its background tasks.
     pub async fn connect(cfg: CacheConfig) -> CacheResult<Self> {
-        let mut fcfg = RedisConfig::from_url(&cfg.url)?;
+        let mut fcfg = Config::from_url(&cfg.url)?;
         fcfg.fail_fast = true;
         let pool = Builder::from_config(fcfg).build_pool(cfg.pool_size)?;
         pool.init().await?;

@@ -12,9 +12,7 @@
 use crate::error::{ChainError, ChainResult, rpc_err};
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
-use alloy_rpc_types::{
-    Block, BlockNumberOrTag, Filter, Log, TransactionInput, TransactionRequest,
-};
+use alloy_rpc_types::{Block, BlockNumberOrTag, Filter, Log, TransactionInput, TransactionRequest};
 use indexer_domain::BlockHeight;
 
 /// Concrete provider type — alloy 2.0's default HTTP transport (reqwest).
