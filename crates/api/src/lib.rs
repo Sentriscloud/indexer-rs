@@ -123,7 +123,7 @@ pub fn make_router(state: AppState, cfg: RouterConfig) -> Router {
     }
 
     app.layer(from_fn(observability::track_request))
-        .layer(GovernorLayer { config: governor })
+        .layer(GovernorLayer::new(governor))
         .layer(from_fn_with_state(auth_state, auth::require_bearer))
         // request_id is outermost so EVERY layer + handler observes the same
         // value, and the response header carries it back even on 4xx/5xx

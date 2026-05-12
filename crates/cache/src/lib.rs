@@ -38,8 +38,8 @@ pub enum CacheError {
     Open,
 }
 
-impl From<fred::error::RedisError> for CacheError {
-    fn from(e: fred::error::RedisError) -> Self {
+impl From<fred::error::Error> for CacheError {
+    fn from(e: fred::error::Error) -> Self {
         CacheError::Redis(e.to_string())
     }
 }
