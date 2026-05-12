@@ -45,7 +45,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "macros", "migrate", "chrono", "bigdecimal", "uuid"] }
 
 # Chain types (alloy)
-alloy-primitives = "0.8"
+alloy-primitives = "1.5"
 alloy-provider = "0.7"
 alloy-rpc-types = "0.7"
 alloy-sol-types = "0.8"
