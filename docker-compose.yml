@@ -61,7 +61,11 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8080/health || exit 1"]
+      # `wget` isn't in debian-bookworm-slim either; same swap as the
+      # indexer healthcheck above. The api binary runs as PID 1, and the
+      # process exiting is already caught by docker's `restart: unless-stopped`
+      # — this just keeps `docker ps` honest.
+      test: ["CMD-SHELL", "[ \"$$(cat /proc/1/comm)\" = api ]"]
       interval: 10s
       timeout: 3s
       retries: 5
