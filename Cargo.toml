@@ -63,7 +63,7 @@ tower-http = { version = "0.6", features = ["cors", "trace", "timeout"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # Redis
-fred = { version = "9", features = ["enable-rustls-ring"] }
+fred = { version = "10", features = ["enable-rustls-ring"] }
 
 # ClickHouse
 clickhouse = { version = "0.13", features = ["uuid", "time"] }
