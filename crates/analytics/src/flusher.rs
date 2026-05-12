@@ -83,7 +83,7 @@ async fn flush(client: &Client, table: &str, buf: &mut Vec<RawTxRow>) -> Analyti
         return Ok(());
     }
     let count = buf.len();
-    let mut insert = client.insert(table)?;
+    let mut insert = client.insert::<RawTxRow>(table).await?;
     for row in buf.drain(..) {
         insert.write(&row).await?;
     }
