@@ -1,94 +1,19 @@
-//! Convert alloy `Block` (rpc-types) into our `indexer_domain::Block` +
-//! the underlying `Transaction` rows.
+//! Convert chain responses into our `indexer_domain` row types.
 //!
-//! Implementation note: alloy 0.7's `rpc_types::Transaction` hides its
-//! interesting fields inside `inner: Recovered<TxEnvelope>` and surfaces
-//! them via traits (`alloy_consensus::Transaction`). The trait surface
-//! churns between alloy minor versions; we'd be re-doing this every bump.
+//! Two paths live here:
 //!
-//! Instead we lean on alloy's own JSON shape (which matches the wire
-//! `eth_getBlockByNumber` format that our DTO `WireTx` mirrors). One
-//! `serde_json` round-trip + decode is cheap at our request rates and
-//! decouples us from alloy's internal API.
+//! - **Native REST** ([`to_domain_block_from_native`], [`to_domain_txs_from_native`])
+//!   pulls `/chain/blocks/<n>` and maps the Sentrix-native shape directly.
+//!   This is the working backfill path — Sentrix's `eth_getBlockByNumber`
+//!   ignores the `full=true` flag (always returns hash arrays), so the
+//!   alloy `Block` route can't decode the tx vec.
+//! - **alloy Log** ([`to_domain_log`]) is still used for `eth_getLogs`,
+//!   which Sentrix implements correctly.
 
-use alloy_rpc_types::Block as RpcBlock;
+use indexer_chain::{NativeBlockResponse, NativeBlockTx};
 use indexer_domain::{
     Block as DomBlock, BlockHeight, Hash, Log as DomLog, Transaction as DomTx, TxIndex, TxType, Wei,
 };
-use serde::Deserialize;
-use std::str::FromStr;
-
-/// Header-level Block (no txs).
-pub fn to_domain_block(rpc: &RpcBlock) -> Result<DomBlock, ConvertError> {
-    let header = &rpc.header;
-    let h = BlockHeight::from(header.number);
-    Ok(DomBlock {
-        height: h,
-        hash: hex_hash(header.hash.as_slice()),
-        parent_hash: hex_hash(header.parent_hash.as_slice()),
-        timestamp: i64::try_from(header.timestamp)
-            .map_err(|_| ConvertError::OutOfRange("timestamp".into()))?,
-        validator: hex_addr(header.beneficiary.as_slice()),
-        gas_used: i64::try_from(header.gas_used)
-            .map_err(|_| ConvertError::OutOfRange("gas_used".into()))?,
-        gas_limit: i64::try_from(header.gas_limit)
-            .map_err(|_| ConvertError::OutOfRange("gas_limit".into()))?,
-        base_fee: header.base_fee_per_gas.map(Wei::from),
-        tx_count: i32::try_from(rpc.transactions.len())
-            .map_err(|_| ConvertError::OutOfRange("tx_count".into()))?,
-        state_root: Some(hex_hash(header.state_root.as_slice())),
-        // Sentrix-native fields the EVM RPC view doesn't expose. Filled in
-        // by the native REST follow-up when the sync layer needs them; for
-        // now we default to safe zeros / empties.
-        round: 0,
-        justification_signers: Vec::new(),
-    })
-}
-
-/// Convert each tx in the RPC block to our domain shape. Returns empty when
-/// the block was fetched without `transactions=full`.
-pub fn to_domain_txs(rpc: &RpcBlock) -> Result<Vec<DomTx>, ConvertError> {
-    // Round-trip the alloy Block through JSON to read tx fields by name.
-    let v =
-        serde_json::to_value(rpc).map_err(|e| ConvertError::Decode(format!("rpc->json: {e}")))?;
-    let wire: WireBlock = serde_json::from_value(v)
-        .map_err(|e| ConvertError::Decode(format!("json->WireBlock: {e}")))?;
-    let height = BlockHeight::from(rpc.header.number);
-    wire.transactions
-        .iter()
-        .enumerate()
-        .map(|(idx, t)| convert_wire_tx(height, idx, t))
-        .collect()
-}
-
-fn convert_wire_tx(height: BlockHeight, idx: usize, t: &WireTx) -> Result<DomTx, ConvertError> {
-    let tx_index =
-        TxIndex(i32::try_from(idx).map_err(|_| ConvertError::OutOfRange("tx_index".into()))?);
-    Ok(DomTx {
-        hash: t.hash.clone(),
-        block_height: height,
-        tx_index,
-        from_addr: t.from.clone(),
-        to_addr: t.to.clone(),
-        value: parse_wei("value", &t.value)?,
-        gas_limit: parse_hex_i64("gas", &t.gas)?,
-        gas_used: None,
-        gas_price: t
-            .gas_price
-            .as_deref()
-            .map(|s| parse_wei("gas_price", s))
-            .transpose()?,
-        fee: Wei::ZERO,
-        nonce: parse_hex_i64("nonce", &t.nonce)?,
-        data: Some(t.input.clone()),
-        status: 1,
-        contract_address: None,
-        // Pre-Voyager / pre-EVM blocks carry native-only txs; this hint gets
-        // refined by the native REST follow-up. EVM is the safe default for
-        // EVM-shaped reads at this layer.
-        tx_type: TxType::Evm,
-    })
-}
 
 /// Convert an alloy `Log` into our domain `Log`. The block's logs come from
 /// `eth_getLogs` (separate call from `eth_getBlockByNumber`).
@@ -129,37 +54,103 @@ fn hex_addr(bytes: &[u8]) -> String {
     format!("0x{}", hex::encode(bytes))
 }
 
-fn parse_hex_i64(field: &str, s: &str) -> Result<i64, ConvertError> {
-    let stripped = s.strip_prefix("0x").unwrap_or(s);
-    i64::from_str_radix(stripped, 16)
-        .map_err(|e| ConvertError::Decode(format!("{field} '{s}': {e}")))
+/// Add a `0x` prefix if missing. Sentrix's native serializer drops the
+/// prefix on hashes/addresses; the domain layer wants it.
+fn with_0x(s: &str) -> String {
+    if s.starts_with("0x") || s.starts_with("0X") {
+        s.to_string()
+    } else {
+        format!("0x{s}")
+    }
 }
 
-fn parse_wei(field: &str, s: &str) -> Result<Wei, ConvertError> {
-    use alloy_primitives::U256;
-    let stripped = s.strip_prefix("0x").unwrap_or(s);
-    let u = U256::from_str_radix(stripped, 16)
-        .map_err(|e| ConvertError::Decode(format!("{field} '{s}': {e}")))?;
-    let _ = Wei::from_str; // keep import alive (used in tests).
-    Ok(Wei::from(u))
+/// Map a native `/chain/blocks/<n>` block (header view) into a domain
+/// `Block`. Gas accounting fields aren't in the native shape (Sentrix
+/// doesn't model gas at the block level the EVM way), so they're zeroed —
+/// the receipts backfill, when wired, can fill them per-tx.
+pub fn to_domain_block_from_native(b: &NativeBlockResponse) -> Result<DomBlock, ConvertError> {
+    if b.index < 0 {
+        return Err(ConvertError::OutOfRange("block.index".into()));
+    }
+    let tx_count = i32::try_from(b.transactions.len())
+        .map_err(|_| ConvertError::OutOfRange("tx_count".into()))?;
+    let state_root = b.state_root.as_ref().filter(|r| !r.is_empty()).map(|r| hex_hash(r));
+    Ok(DomBlock {
+        height: BlockHeight(b.index),
+        hash: with_0x(&b.hash),
+        parent_hash: with_0x(&b.previous_hash),
+        timestamp: b.timestamp,
+        validator: with_0x(&b.validator),
+        gas_used: 0,
+        gas_limit: 0,
+        base_fee: None,
+        tx_count,
+        state_root,
+        round: b.round,
+        // Justification signer list is exposed via /chain/blocks/<n> as a
+        // separate field (`justification`) that we don't decode yet; the
+        // staking layer doesn't read it during backfill.
+        justification_signers: Vec::new(),
+    })
 }
 
-#[derive(Deserialize)]
-struct WireBlock {
-    transactions: Vec<WireTx>,
+/// Map a native block's `transactions[]` into domain `Transaction` rows.
+/// Lossy on EVM-only fields (gas_limit, gas_price) — they're not in the
+/// native shape; rely on EVM JSON-RPC compat once the chain ships it.
+pub fn to_domain_txs_from_native(b: &NativeBlockResponse) -> Result<Vec<DomTx>, ConvertError> {
+    let height = BlockHeight(b.index);
+    b.transactions
+        .iter()
+        .enumerate()
+        .map(|(idx, t)| convert_native_tx(height, idx, t))
+        .collect()
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WireTx {
-    hash: String,
-    from: String,
-    to: Option<String>,
-    value: String,
-    gas: String,
-    gas_price: Option<String>,
-    nonce: String,
-    input: String,
+fn convert_native_tx(
+    height: BlockHeight,
+    idx: usize,
+    t: &NativeBlockTx,
+) -> Result<DomTx, ConvertError> {
+    let tx_index =
+        TxIndex(i32::try_from(idx).map_err(|_| ConvertError::OutOfRange("tx_index".into()))?);
+    let nonce =
+        i64::try_from(t.nonce).map_err(|_| ConvertError::OutOfRange("tx.nonce".into()))?;
+    let from_addr = if t.from_address == "COINBASE" {
+        // The TS schema uses a lowercase sentinel; the historical row is
+        // `from_addr = '0x0000...0000'`, `tx_type = 'coinbase'`. Match that
+        // exactly so parity-comparison reads stay aligned.
+        "0x0000000000000000000000000000000000000000".to_string()
+    } else {
+        with_0x(&t.from_address)
+    };
+    let to_addr = t.to_address.as_ref().map(|a| with_0x(a));
+    let tx_type = if t.from_address == "COINBASE" {
+        TxType::Coinbase
+    } else if t.chain_id == 0 {
+        TxType::System
+    } else {
+        // chain_id == 7119 / 7120 indicates the EVM tx flow; we can't tell
+        // pure native from EVM precisely without the tx_type field, so EVM
+        // is the conservative bucket. Refine later if signal arrives.
+        TxType::Evm
+    };
+    Ok(DomTx {
+        hash: with_0x(&t.txid),
+        block_height: height,
+        tx_index,
+        from_addr,
+        to_addr,
+        value: Wei::from(alloy_primitives::U256::from(t.amount)),
+        gas_limit: 0,
+        gas_used: None,
+        gas_price: None,
+        fee: Wei::from(alloy_primitives::U256::from(t.fee)),
+        nonce,
+        data: t.data.clone(),
+        status: 1,
+        contract_address: None,
+        tx_type,
+    })
 }
 
 /// Conversion failed mid-flight. These are bugs (chain returned something
@@ -172,7 +163,4 @@ pub enum ConvertError {
     /// Numeric value didn't fit our storage type (e.g. block timestamp > i64).
     #[error("out of range: {0}")]
     OutOfRange(String),
-    /// JSON / hex decode failure.
-    #[error("decode: {0}")]
-    Decode(String),
 }

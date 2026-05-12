@@ -8,7 +8,7 @@
 use crate::error::{ChainError, ChainResult};
 use crate::pb;
 use tonic::Streaming;
-use tonic::transport::{Channel, Endpoint};
+use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 
 type SentrixGrpc = pb::sentrix_client::SentrixClient<Channel>;
 
@@ -25,8 +25,20 @@ impl GrpcClient {
     /// caller passes an `https://` URL; the workspace's tonic feature set
     /// includes `tls-roots` so system roots are picked up automatically.
     pub async fn connect(url: impl Into<String>) -> ChainResult<Self> {
-        let endpoint = Endpoint::from_shared(url.into())
+        let url: String = url.into();
+        let is_https = url.starts_with("https://");
+        let mut endpoint = Endpoint::from_shared(url)
             .map_err(|e| ChainError::InvalidArgument(format!("bad grpc url: {e}")))?;
+        // tonic 0.14 doesn't auto-enable TLS on https:// — we have to opt in
+        // explicitly using the native-roots feature flagged in Cargo.toml.
+        // Without this, https:// endpoints fail with `transport error` on
+        // the first connect (handshake never starts because the channel
+        // stays plaintext).
+        if is_https {
+            endpoint = endpoint
+                .tls_config(ClientTlsConfig::new().with_native_roots())
+                .map_err(|e| ChainError::InvalidArgument(format!("grpc tls config: {e}")))?;
+        }
         let channel = endpoint.connect().await?;
         Ok(Self {
             inner: pb::sentrix_client::SentrixClient::new(channel),

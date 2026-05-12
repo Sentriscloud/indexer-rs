@@ -11,11 +11,13 @@
 //! (the cursor never lands ahead of the data — spec §5 invariant 2).
 
 use crate::block_writer::{BlockBundle, write_block};
-use crate::convert::{to_domain_block, to_domain_log, to_domain_txs};
+use crate::convert::{
+    to_domain_block_from_native, to_domain_log, to_domain_txs_from_native,
+};
 use crate::cursor::read_cursor;
 use crate::{SyncConfig, SyncError, SyncResult};
 use indexer_analytics::AnalyticsHandle;
-use indexer_chain::{BackoffConfig, ChainProvider, retry_with_backoff};
+use indexer_chain::{BackoffConfig, ChainProvider, RestClient, retry_with_backoff};
 use indexer_db::PgPool;
 use indexer_domain::BlockHeight;
 use tokio_util::sync::CancellationToken;
@@ -26,6 +28,7 @@ use tokio_util::sync::CancellationToken;
 pub async fn run_backfill(
     pool: &PgPool,
     provider: &ChainProvider,
+    rest: &RestClient,
     cfg: &SyncConfig,
     cancel: CancellationToken,
     analytics: Option<&AnalyticsHandle>,
@@ -57,7 +60,7 @@ pub async fn run_backfill(
             return Ok(cursor);
         }
         let next = BlockHeight(cursor.0 + 1);
-        ingest_one(pool, provider, next, backoff, analytics).await?;
+        ingest_one(pool, provider, rest, next, backoff, analytics).await?;
         cursor = next;
     }
     tracing::info!(
@@ -68,18 +71,23 @@ pub async fn run_backfill(
 }
 
 /// Fetch + write one block. Pulled out for the tail loop to reuse.
+///
+/// Blocks + their tx envelopes come from the native REST endpoint
+/// (`/chain/blocks/<n>`) — Sentrix's `eth_getBlockByNumber(full=true)`
+/// ignores the `full` flag, so the alloy path can't decode the tx vec.
+/// Logs still go through alloy / `eth_getLogs`, which works correctly.
 pub async fn ingest_one(
     pool: &PgPool,
     provider: &ChainProvider,
+    rest: &RestClient,
     h: BlockHeight,
     backoff: BackoffConfig,
     analytics: Option<&AnalyticsHandle>,
 ) -> SyncResult<()> {
-    let block_opt =
-        retry_with_backoff(backoff, || async { provider.block_with_txs(h).await }).await?;
+    let block_opt = retry_with_backoff(backoff, || async { rest.block(h).await }).await?;
     let block = block_opt.ok_or_else(|| {
         SyncError::Invalid(format!(
-            "backfill: provider returned None for height {}",
+            "backfill: native rest returned None for height {}",
             h.0
         ))
     })?;
@@ -89,8 +97,10 @@ pub async fn ingest_one(
     })
     .await?;
 
-    let dom_block = to_domain_block(&block).map_err(|e| SyncError::Invalid(e.to_string()))?;
-    let dom_txs = to_domain_txs(&block).map_err(|e| SyncError::Invalid(e.to_string()))?;
+    let dom_block =
+        to_domain_block_from_native(&block).map_err(|e| SyncError::Invalid(e.to_string()))?;
+    let dom_txs =
+        to_domain_txs_from_native(&block).map_err(|e| SyncError::Invalid(e.to_string()))?;
     let dom_logs = logs
         .iter()
         .map(to_domain_log)
