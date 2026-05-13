@@ -84,51 +84,27 @@ pub async fn ingest_one(
 ) -> SyncResult<()> {
     let block_opt = retry_with_backoff(backoff, || async { rest.block(h).await }).await?;
     let Some(block) = block_opt else {
-        // Chain returned 404 — `h` is before the rolling block-body
-        // retention window (Sentrix prunes block bodies outside
-        // `window_start_block`). The block existed + was canonical; we
-        // just can't fetch its txs anymore.
+        // Chain returned 404. v0.2.3 jumped cursor to
+        // `window_start_block - 1` here on the assumption that 404
+        // meant "this and every prior block has been pruned". That
+        // assumption was wrong: per `sentrix-core::blockchain` the
+        // chain keeps every block in MDBX, only the in-memory sliding
+        // window is bounded by CHAIN_WINDOW_SIZE. The 404 we observed
+        // at h=32690 was a damaged-block gap from a forensic recovery,
+        // not a retention boundary — and jumping to window_start would
+        // skip ~1.7M legitimately-available blocks for a single bad one.
         //
-        // Walking the gap one-block-at-a-time is wasteful — at ~1 skip
-        // per RTT and ~1.7M pruned blocks on a months-old chain, that's
-        // weeks of network round-trips for zero indexed rows. Instead,
-        // ask the chain where its retention window starts and jump the
-        // cursor straight there. The historical gap is documented as a
-        // followup: spin up an archive-mode chain node + re-point
-        // INDEXER_NETWORK at it to fill the gap in one fresh walk.
-        match rest.chain_info().await {
-            Ok(info) if info.window_start_block.is_some_and(|w| w > h.0) => {
-                let target = BlockHeight(info.window_start_block.unwrap() - 1);
-                tracing::warn!(
-                    from = h.0,
-                    to = target.0 + 1,
-                    pruned = target.0 + 1 - h.0,
-                    "backfill: chain has pruned this block body (404); jumping cursor to \
-                     window_start_block. Historical gap can be filled later by repointing \
-                     INDEXER_NETWORK at an archive-mode node that retains all block bodies."
-                );
-                write_cursor(pool, target, 0).await?;
-                return Ok(());
-            }
-            Ok(_) => {
-                // Chain didn't advertise a retention window (archive-mode
-                // or pre-feature); the 404 is genuinely a one-off gap.
-                // Fall back to single-block skip + log.
-                tracing::warn!(
-                    height = h.0,
-                    "backfill: 404 from chain but no window_start_block \
-                     advertised; skipping single block."
-                );
-                write_cursor(pool, h, 0).await?;
-                return Ok(());
-            }
-            Err(e) => {
-                // chain_info failed; surface as transient error so the
-                // orchestrator retries the whole iteration rather than
-                // burning the cursor on a transient network blip.
-                return Err(SyncError::Chain(e));
-            }
-        }
+        // Correct behaviour: single-block skip + advance the cursor by
+        // one. Walking the (rare) gaps one-at-a-time is fine; the
+        // typical case is no 404 at all.
+        tracing::warn!(
+            height = h.0,
+            "backfill: chain returned 404 for this height; skipping single block. \
+             Likely a damaged-block gap from a past forensic recovery — the chain \
+             does NOT prune block bodies, every height is normally available."
+        );
+        write_cursor(pool, h, 0).await?;
+        return Ok(());
     };
 
     let logs = retry_with_backoff(backoff, || async {
