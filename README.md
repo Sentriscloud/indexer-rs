@@ -35,7 +35,7 @@ bin/
   └── api.rs       HTTP server entry point
 
 migrations/        sqlx migrations ported from drizzle
-proto/             sentrix.proto (copy from chain repo)
+crates/chain/proto/  sentrix.proto (vendored — TODO swap for sentrix-proto crate from crates.io)
 snapshots/         golden test corpora (api JSON, ingest pg_dump)
 docker/            Dockerfiles + docker-compose
 ```
@@ -59,7 +59,7 @@ docker/            Dockerfiles + docker-compose
 
 ```bash
 cargo build --release
-cargo test --workspace                                      # 20+ unit tests
+cargo test --workspace                                      # 30+ unit tests
 cargo clippy --workspace --all-targets -- -D warnings
 cargo deny check
 ```
