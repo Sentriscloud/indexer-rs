@@ -5,9 +5,11 @@ name: cargo audit
 # on the latest RustSec database so a new advisory against any transitive
 # dep surfaces in ≤ 1 CI run rather than waiting for the next manual sweep.
 #
-# Wrapped in `|| echo ::warning::` — findings surface as PR check warnings,
-# not merge blockers. Promote to blocking by dropping the warning shim
-# once the backlog is clean and we can action new findings within the SLO.
+# Advisory findings (cargo audit exit 1) surface as PR check warnings,
+# non-blocking. Execution failures (exit 2+) fail the job — see the
+# explicit exit-code branching in the Run step below. Promote advisories
+# to blocking by removing that branch once the backlog is clean and new
+# findings can be actioned within SLO.
 # Ignore list mirrors deny.toml [advisories].ignore — keep them in sync.
 
 on:
