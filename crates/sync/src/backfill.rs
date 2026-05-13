@@ -84,22 +84,51 @@ pub async fn ingest_one(
 ) -> SyncResult<()> {
     let block_opt = retry_with_backoff(backoff, || async { rest.block(h).await }).await?;
     let Some(block) = block_opt else {
-        // Chain returned 404 — the block body has aged out of the
-        // node's rolling history window (Sentrix prunes block bodies
-        // outside `window_start_block`). The block existed and was
-        // canonical; we just can't fetch its txs anymore. Advance the
-        // cursor past it so backfill keeps moving forward rather than
-        // retry-looping on a height that will never come back. A
-        // dedicated archive-mode chain node (no body prune) would let
-        // us close this gap properly — until then, skip + log.
-        tracing::warn!(
-            height = h.0,
-            "backfill: chain has pruned this block body (404); skipping. \
-             For a complete historical index, point INDEXER_NETWORK at \
-             an archive-mode node that retains all block bodies."
-        );
-        write_cursor(pool, h, 0).await?;
-        return Ok(());
+        // Chain returned 404 — `h` is before the rolling block-body
+        // retention window (Sentrix prunes block bodies outside
+        // `window_start_block`). The block existed + was canonical; we
+        // just can't fetch its txs anymore.
+        //
+        // Walking the gap one-block-at-a-time is wasteful — at ~1 skip
+        // per RTT and ~1.7M pruned blocks on a months-old chain, that's
+        // weeks of network round-trips for zero indexed rows. Instead,
+        // ask the chain where its retention window starts and jump the
+        // cursor straight there. The historical gap is documented as a
+        // followup: spin up an archive-mode chain node + re-point
+        // INDEXER_NETWORK at it to fill the gap in one fresh walk.
+        match rest.chain_info().await {
+            Ok(info) if info.window_start_block.is_some_and(|w| w > h.0) => {
+                let target = BlockHeight(info.window_start_block.unwrap() - 1);
+                tracing::warn!(
+                    from = h.0,
+                    to = target.0 + 1,
+                    pruned = target.0 + 1 - h.0,
+                    "backfill: chain has pruned this block body (404); jumping cursor to \
+                     window_start_block. Historical gap can be filled later by repointing \
+                     INDEXER_NETWORK at an archive-mode node that retains all block bodies."
+                );
+                write_cursor(pool, target, 0).await?;
+                return Ok(());
+            }
+            Ok(_) => {
+                // Chain didn't advertise a retention window (archive-mode
+                // or pre-feature); the 404 is genuinely a one-off gap.
+                // Fall back to single-block skip + log.
+                tracing::warn!(
+                    height = h.0,
+                    "backfill: 404 from chain but no window_start_block \
+                     advertised; skipping single block."
+                );
+                write_cursor(pool, h, 0).await?;
+                return Ok(());
+            }
+            Err(e) => {
+                // chain_info failed; surface as transient error so the
+                // orchestrator retries the whole iteration rather than
+                // burning the cursor on a transient network blip.
+                return Err(SyncError::Chain(e));
+            }
+        }
     };
 
     let logs = retry_with_backoff(backoff, || async {

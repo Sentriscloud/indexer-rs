@@ -80,6 +80,24 @@ impl RestClient {
         Ok(Some(parsed))
     }
 
+    /// Fetch `/chain/info` — chain tip + pruning window + supply summary.
+    /// Used by the backfill orchestrator to detect when an asked-for height
+    /// has fallen out of the chain's block-body retention window so it can
+    /// jump the cursor straight to `window_start_block` rather than walking
+    /// 404s one-by-one.
+    pub async fn chain_info(&self) -> ChainResult<ChainInfoResponse> {
+        let url = format!("{}/chain/info", self.base);
+        let resp = self.http.get(&url).send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ChainError::Rpc(format!("native rest {status}: {body}")));
+        }
+        let body = resp.bytes().await?;
+        let parsed: ChainInfoResponse = serde_json::from_slice(&body)?;
+        Ok(parsed)
+    }
+
     /// Fetch a block by height with full txs inlined. Returns None on 404
     /// (chain doesn't have this height yet, or asking past pruning window).
     pub async fn block(&self, h: BlockHeight) -> ChainResult<Option<NativeBlockResponse>> {
@@ -97,6 +115,25 @@ impl RestClient {
         let parsed: NativeBlockResponse = serde_json::from_slice(&body)?;
         Ok(Some(parsed))
     }
+}
+
+/// Subset of `/chain/info` — chain tip + the rolling block-body retention
+/// window the chain advertises (`window_start_block` is the lowest height
+/// whose body is still queryable via `/chain/blocks/<n>`; older heights
+/// 404).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChainInfoResponse {
+    /// Current chain tip height.
+    pub height: i64,
+    /// Lowest height with a queryable block body. Heights below this have
+    /// been pruned from the chain's storage. Asking for them returns 404.
+    /// May be absent on archive-mode nodes that retain full history.
+    #[serde(default)]
+    pub window_start_block: Option<i64>,
+    /// True if `height - window_start_block < total_blocks` (i.e. chain
+    /// has pruned old bodies). Absent on archive-mode nodes.
+    #[serde(default)]
+    pub window_is_partial: Option<bool>,
 }
 
 /// Subset of the native `/chain/blocks/<n>` response shape that the indexer
