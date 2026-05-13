@@ -12,7 +12,7 @@
 
 use crate::block_writer::{BlockBundle, write_block};
 use crate::convert::{to_domain_block_from_native, to_domain_log, to_domain_txs_from_native};
-use crate::cursor::read_cursor;
+use crate::cursor::{read_cursor, write_cursor};
 use crate::{SyncConfig, SyncError, SyncResult};
 use indexer_analytics::AnalyticsHandle;
 use indexer_chain::{BackoffConfig, ChainProvider, RestClient, retry_with_backoff};
@@ -83,12 +83,24 @@ pub async fn ingest_one(
     analytics: Option<&AnalyticsHandle>,
 ) -> SyncResult<()> {
     let block_opt = retry_with_backoff(backoff, || async { rest.block(h).await }).await?;
-    let block = block_opt.ok_or_else(|| {
-        SyncError::Invalid(format!(
-            "backfill: native rest returned None for height {}",
-            h.0
-        ))
-    })?;
+    let Some(block) = block_opt else {
+        // Chain returned 404 — the block body has aged out of the
+        // node's rolling history window (Sentrix prunes block bodies
+        // outside `window_start_block`). The block existed and was
+        // canonical; we just can't fetch its txs anymore. Advance the
+        // cursor past it so backfill keeps moving forward rather than
+        // retry-looping on a height that will never come back. A
+        // dedicated archive-mode chain node (no body prune) would let
+        // us close this gap properly — until then, skip + log.
+        tracing::warn!(
+            height = h.0,
+            "backfill: chain has pruned this block body (404); skipping. \
+             For a complete historical index, point INDEXER_NETWORK at \
+             an archive-mode node that retains all block bodies."
+        );
+        write_cursor(pool, h, 0).await?;
+        return Ok(());
+    };
 
     let logs = retry_with_backoff(backoff, || async {
         provider.logs_in_range(h, h, None).await
