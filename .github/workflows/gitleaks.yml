@@ -40,6 +40,15 @@ jobs:
           sudo mv gitleaks /usr/local/bin/
           gitleaks version
       - name: Run gitleaks
+        # Distinguish leak findings (exit 10, non-blocking warning) from
+        # tool execution failures (exit 2+, must fail the job).
         run: |
-          gitleaks detect --source . --redact --verbose \
-            || echo "::warning::gitleaks findings (non-blocking)"
+          set +e
+          gitleaks detect --source . --redact --verbose --exit-code 10
+          status=$?
+          set -e
+          case "$status" in
+            0)  echo "no leaks detected" ;;
+            10) echo "::warning::gitleaks findings (non-blocking)" ;;
+            *)  echo "::error::gitleaks execution failed with exit $status"; exit "$status" ;;
+          esac
