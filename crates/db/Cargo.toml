@@ -8,7 +8,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-indexer-domain = { path = "../domain", version = "0.2.2" }
+indexer-domain = { path = "../domain", version = "0.2.3" }
 sqlx = { workspace = true }
 tokio.workspace = true
 serde_json.workspace = true

@@ -9,7 +9,7 @@ authors.workspace = true
 build = "build.rs"
 
 [dependencies]
-indexer-domain = { path = "../domain", version = "0.2.2" }
+indexer-domain = { path = "../domain", version = "0.2.3" }
 
 # alloy: EVM JSON-RPC client.
 alloy-primitives.workspace = true
