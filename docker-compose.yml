@@ -61,7 +61,12 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8080/health || exit 1"]
+      # Same swap as the indexer healthcheck above — `wget` isn't in
+      # debian-bookworm-slim, so the previous wget-based probe always
+      # exited 1 and showed the container as `(unhealthy)` even when
+      # /health was serving 200 normally. /proc/1/comm matches "api"
+      # because the binary runs directly as PID 1 (no shell wrapper).
+      test: ["CMD-SHELL", "[ \"$$(cat /proc/1/comm)\" = api ]"]
       interval: 10s
       timeout: 3s
       retries: 5
