@@ -1,0 +1,62 @@
+name: cargo audit
+
+# RustSec advisory scan. Runs alongside the existing cargo-deny check in
+# ci.yml — deny enforces license + ban policy from deny.toml; audit fires
+# on the latest RustSec database so a new advisory against any transitive
+# dep surfaces in ≤ 1 CI run rather than waiting for the next manual sweep.
+#
+# Advisory findings (cargo audit exit 1) surface as PR check warnings,
+# non-blocking. Execution failures (exit 2+) fail the job — see the
+# explicit exit-code branching in the Run step below. Promote advisories
+# to blocking by removing that branch once the backlog is clean and new
+# findings can be actioned within SLO.
+# Ignore list mirrors deny.toml [advisories].ignore — keep them in sync.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # Daily at 04:00 UTC — surfaces freshly-published advisories without
+    # needing a PR to trigger the scan.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: cargo audit (advisory scan)
+    runs-on: ubuntu-22.04
+    env:
+      # Pin to a known-good cargo-audit so the security scan stays
+      # reproducible across runs. Bump intentionally via PR (so behaviour
+      # changes are reviewed, not silently picked up from latest-stable).
+      CARGO_AUDIT_VERSION: "0.22.1"
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked --version "$CARGO_AUDIT_VERSION"
+      - name: Run cargo audit
+        # Distinguish advisory findings (cargo audit exit 1, non-blocking
+        # warning) from tool execution failures (exit 2+, must fail the
+        # job). The previous `|| echo` swallowed both.
+        # Ignore list mirrors deny.toml [advisories].ignore — each ID
+        # has a documented reason there; if you add one here, add it
+        # there too.
+        run: |
+          set +e
+          cargo audit \
+            --ignore RUSTSEC-2024-0436 \
+            --ignore RUSTSEC-2025-0134
+          status=$?
+          set -e
+          case "$status" in
+            0) echo "no advisories" ;;
+            1) echo "::warning::cargo audit findings (non-blocking, see deny.toml for ignored IDs)" ;;
+            *) echo "::error::cargo audit execution failed with exit $status"; exit "$status" ;;
+          esac
