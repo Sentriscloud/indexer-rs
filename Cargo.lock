@@ -2855,17 +2855,13 @@ dependencies = [
  "alloy-transport-http",
  "futures",
  "indexer-domain",
- "prost",
- "prost-build",
  "reqwest 0.12.28",
+ "sentrix-proto",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tonic",
- "tonic-build",
- "tonic-prost",
- "tonic-prost-build",
  "tracing",
 ]
 
@@ -4752,6 +4748,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9900206b54a3527fdc7b8a938bffd94a568bac4f4aa8113b209df75a09c0dec2"
 dependencies = [
  "pest",
+]
+
+[[package]]
+name = "sentrix-proto"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4a96198c479e3dad9d7a2718c3d12d86a228cd07a2bade9091ef64206c273c9"
+dependencies = [
+ "prost",
+ "prost-build",
+ "tonic",
+ "tonic-build",
+ "tonic-prost",
+ "tonic-prost-build",
 ]
 
 [[package]]
