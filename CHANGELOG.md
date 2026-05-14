@@ -4,6 +4,10 @@ All notable changes to `indexer-rs`. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Changed
+
+- **Backfill writes now go through PG `COPY FROM STDIN`**, not per-row INSERT. Buffer N blocks (default 100, configurable via `INDEXER_WRITE_BATCH_SIZE`, max 1000) then flush blocks/transactions/logs in a single transaction with the cursor bump to `MAX(height)`. The tail loop's `ingest_one` keeps the per-row `ON CONFLICT DO NOTHING` path for at-tip retries. Spec §5 invariant 2 (cursor never lands ahead of data) holds: cursor advance is inside the same transaction as the COPY streams; partial-batch flush on cancel keeps the cursor in sync.
+
 ### Added
 
 - **CoinBlast orphan adoption** — direct-deployed curves (e.g. CBLAST Genesis pre-factory) are now probed via `eth_call` (`token()` / `curveSupply()` / `graduationSrxThreshold()`) on first sighting and adopted into `cb_tokens` automatically. Topic-collision contracts get cached in `known_non_curves` so each address is probed at most once per worker lifetime.
