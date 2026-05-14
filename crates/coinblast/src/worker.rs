@@ -29,10 +29,10 @@ const KNOWN_NON_CURVES_MAX: usize = 10_000;
 /// existing entry when over cap (HashSet iteration order is randomised
 /// per-run by the default hasher).
 fn cache_non_curve(set: &mut HashSet<String>, addr: String) {
-    if set.len() >= KNOWN_NON_CURVES_MAX {
-        if let Some(victim) = set.iter().next().cloned() {
-            set.remove(&victim);
-        }
+    if set.len() >= KNOWN_NON_CURVES_MAX
+        && let Some(victim) = set.iter().next().cloned()
+    {
+        set.remove(&victim);
     }
     set.insert(addr);
 }
