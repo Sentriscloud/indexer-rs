@@ -62,13 +62,23 @@ pub async fn write_block(
     // Best-effort analytics push, after the SQL boundary so a failed flusher
     // can't roll back our data.
     if let Some(handle) = analytics {
+        // Should never hit (writer only runs on heights coming back from
+        // resolved blocks, never the -1 sentinel from the cursor) but keep
+        // analytics non-fatal: warn + skip the row, don't panic the loop.
+        let block_height = match b.block.height.as_u64() {
+            Some(h) => h,
+            None => {
+                tracing::warn!(
+                    height = ?b.block.height,
+                    "analytics: skipping row — block height not convertible to u64 \
+                     (cursor sentinel reached writer; this should not happen)"
+                );
+                return Ok(());
+            }
+        };
         for t in &b.txs {
             let row = RawTxRow {
-                block_height: b
-                    .block
-                    .height
-                    .as_u64()
-                    .expect("written block heights are non-negative"),
+                block_height,
                 timestamp: b.block.timestamp as u64,
                 tx_hash: t.hash.clone(),
                 from_addr: t.from_addr.clone(),
