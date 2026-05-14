@@ -35,7 +35,7 @@ bin/
   └── api.rs       HTTP server entry point
 
 migrations/        sqlx migrations ported from drizzle
-crates/chain/proto/  sentrix.proto (vendored — TODO swap for sentrix-proto crate from crates.io)
+crates/chain/        gRPC client wrapping the sentrix-proto crate (crates.io); schema lives upstream
 snapshots/         golden test corpora (api JSON, ingest pg_dump)
 docker/            Dockerfiles + docker-compose
 ```
