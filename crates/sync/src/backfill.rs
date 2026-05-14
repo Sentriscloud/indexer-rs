@@ -117,7 +117,7 @@ pub async fn run_backfill(
         }
         cursor = h;
         done += 1;
-        if done % 1000 == 0 {
+        if done.is_multiple_of(1000) {
             tracing::info!(
                 cursor = cursor.0,
                 progress = format!("{done}/{total}"),
