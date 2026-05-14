@@ -42,7 +42,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "macros", "migrate", "chrono", "bigdecimal", "uuid"] }
+# default-features = false drops `any` (multi-backend abstraction) which we
+# don't use; combined with explicit `postgres` it stops the resolver from
+# pulling sqlx-mysql/sqlx-sqlite into Cargo.lock. Eliminates the rsa
+# RUSTSEC-2023-0071 (Marvin) advisory chain (audit 2026-05-13).
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "macros", "migrate", "chrono", "bigdecimal", "uuid", "json"] }
 
 # Chain types (alloy)
 alloy-primitives = "1"

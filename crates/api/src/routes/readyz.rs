@@ -24,6 +24,8 @@ use serde_json::{Value, json};
 use std::time::Duration;
 
 async fn handler(State(state): State<SharedState>) -> (StatusCode, Json<Value>) {
+    // Static strings on the wire — raw sqlx/redis errors leak schema or
+    // connection details (audit 2026-05-13). Detail goes to tracing.
     let pg = match tokio::time::timeout(
         Duration::from_secs(1),
         sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&state.pool),
@@ -31,7 +33,10 @@ async fn handler(State(state): State<SharedState>) -> (StatusCode, Json<Value>) 
     .await
     {
         Ok(Ok(_)) => "ok".to_string(),
-        Ok(Err(e)) => format!("down: {e}"),
+        Ok(Err(e)) => {
+            tracing::error!(error = %e, "readyz: pg probe failed");
+            "down: pg error".to_string()
+        }
         Err(_) => "down: timeout".to_string(),
     };
 
@@ -41,7 +46,10 @@ async fn handler(State(state): State<SharedState>) -> (StatusCode, Json<Value>) 
             // Open / connection error / etc. → down. Cache miss is fine.
             Ok(_) => "ok".to_string(),
             Err(indexer_cache::CacheError::Open) => "down: circuit breaker open".to_string(),
-            Err(e) => format!("down: {e}"),
+            Err(e) => {
+                tracing::error!(error = %e, "readyz: cache probe failed");
+                "down: cache error".to_string()
+            }
         },
     };
 

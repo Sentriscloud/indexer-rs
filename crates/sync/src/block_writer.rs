@@ -64,7 +64,7 @@ pub async fn write_block(
     if let Some(handle) = analytics {
         for t in &b.txs {
             let row = RawTxRow {
-                block_height: b.block.height.as_u64(),
+                block_height: b.block.height.as_u64().expect("written block heights are non-negative"),
                 timestamp: b.block.timestamp as u64,
                 tx_hash: t.hash.clone(),
                 from_addr: t.from_addr.clone(),

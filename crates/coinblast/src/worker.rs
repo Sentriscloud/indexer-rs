@@ -19,6 +19,24 @@ use std::collections::HashSet;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
+/// Cap on `known_non_curves` to prevent unbounded growth on chains with
+/// many spurious Buy/Sell-topic-shaped emitters. When over cap we drop a
+/// random entry — pure perf cache, false eviction just costs one extra
+/// `try_adopt` probe (audit 2026-05-13).
+const KNOWN_NON_CURVES_MAX: usize = 10_000;
+
+/// Insert into `known_non_curves` with a hard cap. Drops one arbitrary
+/// existing entry when over cap (HashSet iteration order is randomised
+/// per-run by the default hasher).
+fn cache_non_curve(set: &mut HashSet<String>, addr: String) {
+    if set.len() >= KNOWN_NON_CURVES_MAX {
+        if let Some(victim) = set.iter().next().cloned() {
+            set.remove(&victim);
+        }
+    }
+    set.insert(addr);
+}
+
 /// Worker config. Defaults match the TS production indexer.
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {
@@ -195,12 +213,12 @@ async fn run_chunk(
                     known_curves.insert(emitter.clone());
                 }
                 Ok(false) => {
-                    known_non_curves.insert(emitter);
+                    cache_non_curve(known_non_curves, emitter);
                     continue;
                 }
                 Err(e) => {
                     tracing::debug!(addr = %emitter, error = %e, "orphan adopt probe failed; treating as non-curve for this run");
-                    known_non_curves.insert(emitter);
+                    cache_non_curve(known_non_curves, emitter);
                     continue;
                 }
             }

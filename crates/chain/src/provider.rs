@@ -58,7 +58,10 @@ impl ChainProvider {
     /// `eth_getBlockByNumber(h, full=true)`. Returns None if the node hasn't
     /// seen this height yet.
     pub async fn block_with_txs(&self, h: BlockHeight) -> ChainResult<Option<Block>> {
-        let tag = BlockNumberOrTag::Number(h.as_u64());
+        let n = h.as_u64().ok_or_else(|| {
+            ChainError::InvalidArgument(format!("block_with_txs: negative height {h:?}"))
+        })?;
+        let tag = BlockNumberOrTag::Number(n);
         self.inner
             .get_block_by_number(tag)
             .full()
@@ -80,9 +83,13 @@ impl ChainProvider {
                 "logs_in_range: to ({to:?}) < from ({from:?})"
             )));
         }
-        let mut filter = Filter::new()
-            .from_block(from.as_u64())
-            .to_block(to.as_u64());
+        let from_n = from.as_u64().ok_or_else(|| {
+            ChainError::InvalidArgument(format!("logs_in_range: negative from {from:?}"))
+        })?;
+        let to_n = to.as_u64().ok_or_else(|| {
+            ChainError::InvalidArgument(format!("logs_in_range: negative to {to:?}"))
+        })?;
+        let mut filter = Filter::new().from_block(from_n).to_block(to_n);
         if let Some(addr) = address {
             filter = filter.address(addr);
         }

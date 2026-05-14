@@ -10,7 +10,7 @@ use std::time::Duration;
 use axum::http::StatusCode;
 use figment::Figment;
 use figment::providers::Env;
-use indexer_api::{AppState, RouterConfig, make_router, observability};
+use indexer_api::{AppState, RouterConfig, make_router, metrics_router, observability};
 use indexer_cache::{CacheClient, CacheConfig};
 use indexer_db::{PoolConfig, connect};
 use serde::Deserialize;
@@ -43,6 +43,14 @@ struct ApiConfig {
     /// Per-IP burst. Default 50.
     #[serde(default = "default_burst")]
     indexer_api_rate_burst: u32,
+    /// Loopback address for the internal Prometheus `/metrics` listener.
+    /// Default 127.0.0.1:9080; set to empty to disable (audit 2026-05-13:
+    /// previously merged into the public router with no auth gating).
+    #[serde(default = "default_metrics_bind")]
+    indexer_api_metrics_bind: String,
+}
+fn default_metrics_bind() -> String {
+    "127.0.0.1:9080".to_string()
 }
 fn default_rate() -> u64 {
     50
@@ -101,14 +109,43 @@ async fn main() -> anyhow::Result<()> {
         auth_token: cfg.indexer_api_bearer_token.clone(),
         rate_per_sec: cfg.indexer_api_rate_per_sec,
         rate_burst: cfg.indexer_api_rate_burst,
-        metrics_handle: Some(metrics_handle),
+        metrics_handle: None,
     };
+
+    // Bind /metrics on a loopback-only listener so Caddy/edge proxy can
+    // never expose it. Operator scrapes via host-local Prometheus.
+    if !cfg.indexer_api_metrics_bind.is_empty() {
+        let bind = cfg.indexer_api_metrics_bind.clone();
+        let mh = metrics_handle.clone();
+        tokio::spawn(async move {
+            match tokio::net::TcpListener::bind(&bind).await {
+                Ok(listener) => {
+                    tracing::info!(addr = %bind, "api: metrics listener up (loopback)");
+                    if let Err(e) =
+                        axum::serve(listener, metrics_router(mh).into_make_service()).await
+                    {
+                        tracing::error!(error = %e, "api: metrics listener exited");
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(addr = %bind, error = %e, "api: metrics bind failed");
+                }
+            }
+        });
+    } else {
+        tracing::info!("api: INDEXER_API_METRICS_BIND empty; metrics endpoint disabled");
+    }
 
     let app = make_router(AppState { pool, cache }, router_cfg)
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(30),
         ))
+        // Permissive CORS is intentional: this is a no-auth public read API.
+        // Any browser origin should be able to fetch /blocks, /tx/<hash>,
+        // etc. for explorers + dashboards. If/when bearer auth becomes
+        // mandatory (not opt-in via INDEXER_API_BEARER_TOKEN), revisit and
+        // tighten to an allowlist (audit 2026-05-13).
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http());
 
