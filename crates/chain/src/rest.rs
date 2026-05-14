@@ -259,4 +259,58 @@ mod tests {
         let raw = r#"{ "txid": "0xabc" }"#;
         assert!(serde_json::from_str::<NativeTxResponse>(raw).is_err());
     }
+
+    #[test]
+    fn parses_single_url() {
+        let c = RestClient::new("http://a.example/").unwrap();
+        assert_eq!(c.bases, vec!["http://a.example".to_string()]);
+        assert_eq!(c.next_base(), "http://a.example");
+        assert_eq!(c.next_base(), "http://a.example");
+    }
+
+    #[test]
+    fn parses_comma_list_trims_and_normalises() {
+        let c =
+            RestClient::new(" http://a.example/ , http://b.example , ,http://c.example/").unwrap();
+        assert_eq!(
+            c.bases,
+            vec![
+                "http://a.example".to_string(),
+                "http://b.example".to_string(),
+                "http://c.example".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn round_robin_rotates_deterministically() {
+        let c = RestClient::new("http://a.example,http://b.example,http://c.example").unwrap();
+        let picks: Vec<&str> = (0..7).map(|_| c.next_base()).collect();
+        assert_eq!(
+            picks,
+            vec![
+                "http://a.example",
+                "http://b.example",
+                "http://c.example",
+                "http://a.example",
+                "http://b.example",
+                "http://c.example",
+                "http://a.example",
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_empty_input() {
+        assert!(RestClient::new("").is_err());
+        assert!(RestClient::new("  ").is_err());
+        assert!(RestClient::new(", , ").is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_url_at_construction() {
+        // Validation must catch bad entries up front, not on round-robin pick.
+        assert!(RestClient::new("not a url").is_err());
+        assert!(RestClient::new("http://ok.example,not://valid url with spaces").is_err());
+    }
 }
