@@ -14,11 +14,26 @@ use crate::block_writer::{BlockBundle, write_block};
 use crate::convert::{to_domain_block_from_native, to_domain_log, to_domain_txs_from_native};
 use crate::cursor::{read_cursor, write_cursor};
 use crate::{SyncConfig, SyncError, SyncResult};
+use futures::stream::{self, StreamExt};
 use indexer_analytics::AnalyticsHandle;
 use indexer_chain::{BackoffConfig, ChainProvider, RestClient, retry_with_backoff};
 use indexer_db::PgPool;
 use indexer_domain::BlockHeight;
 use tokio_util::sync::CancellationToken;
+
+/// How many blocks to fetch concurrently in the backfill window.
+/// Each fetch is one REST call + one eth_getLogs call. Writes still
+/// land sequentially per block. 50 is a conservative default — see
+/// `INDEXER_BACKFILL_CONCURRENCY` env var to tune.
+const DEFAULT_BACKFILL_CONCURRENCY: usize = 50;
+
+fn backfill_concurrency() -> usize {
+    std::env::var("INDEXER_BACKFILL_CONCURRENCY")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n: &usize| n > 0 && n <= 500)
+        .unwrap_or(DEFAULT_BACKFILL_CONCURRENCY)
+}
 
 /// Run the backfill loop until cancellation OR until we reach
 /// `tip - safe_lag` (then return; caller decides whether to sleep + recheck
@@ -52,20 +67,84 @@ pub async fn run_backfill(
         "backfill: starting walk",
     );
 
-    while cursor.0 < cap {
+    // Pipeline: fetch N blocks concurrently (each = REST + eth_getLogs),
+    // write them sequentially in height order so the cursor never lands
+    // ahead of the data. Per-block latency was the bottleneck (3 b/s);
+    // concurrent fetch + serial write keeps invariants while saturating
+    // the network. INDEXER_BACKFILL_CONCURRENCY env var tunes the pool.
+    let concurrency = backfill_concurrency();
+    tracing::info!(concurrency, "backfill: pipelined fetch enabled");
+
+    let start = cursor.0 + 1;
+    let total = (cap - cursor.0) as usize;
+
+    let mut fetched = stream::iter(start..=cap)
+        .map(|h| {
+            let h = BlockHeight(h);
+            async move { (h, fetch_one(provider, rest, h, backoff).await) }
+        })
+        .buffered(concurrency);
+
+    let mut done = 0usize;
+    while let Some((h, result)) = fetched.next().await {
         if cancel.is_cancelled() {
-            tracing::info!(cursor = cursor.0, "backfill: cancelled");
+            tracing::info!(cursor = cursor.0, "backfill: cancelled mid-pipeline");
             return Ok(cursor);
         }
-        let next = BlockHeight(cursor.0 + 1);
-        ingest_one(pool, provider, rest, next, backoff, analytics).await?;
-        cursor = next;
+        match result? {
+            Some(bundle) => write_block(pool, bundle, analytics).await?,
+            None => {
+                // 404 / damaged-block gap (see ingest_one rationale below)
+                tracing::warn!(height = h.0, "backfill: skipping single 404 block");
+                write_cursor(pool, h, 0).await?;
+            }
+        }
+        cursor = h;
+        done += 1;
+        if done % 1000 == 0 {
+            tracing::info!(
+                cursor = cursor.0,
+                progress = format!("{done}/{total}"),
+                "backfill: pipeline progress"
+            );
+        }
     }
     tracing::info!(
         cursor = cursor.0,
+        ingested = done,
         "backfill: caught up to safe-lag boundary"
     );
     Ok(cursor)
+}
+
+/// Fetch (no write) — used by the concurrent pipeline. Returns None on
+/// 404 (damaged-block gap), Some(bundle) on success. Errors propagate.
+async fn fetch_one(
+    provider: &ChainProvider,
+    rest: &RestClient,
+    h: BlockHeight,
+    backoff: BackoffConfig,
+) -> SyncResult<Option<BlockBundle>> {
+    let block_opt = retry_with_backoff(backoff, || async { rest.block(h).await }).await?;
+    let Some(block) = block_opt else {
+        return Ok(None);
+    };
+    let logs =
+        retry_with_backoff(backoff, || async { provider.logs_in_range(h, h, None).await }).await?;
+    let dom_block =
+        to_domain_block_from_native(&block).map_err(|e| SyncError::Invalid(e.to_string()))?;
+    let dom_txs =
+        to_domain_txs_from_native(&block).map_err(|e| SyncError::Invalid(e.to_string()))?;
+    let dom_logs = logs
+        .iter()
+        .map(to_domain_log)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| SyncError::Invalid(e.to_string()))?;
+    Ok(Some(BlockBundle {
+        block: dom_block,
+        txs: dom_txs,
+        logs: dom_logs,
+    }))
 }
 
 /// Fetch + write one block. Pulled out for the tail loop to reuse.
