@@ -13,6 +13,8 @@
 use crate::error::{ChainError, ChainResult};
 use indexer_domain::{BlockHeight, Hash};
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Subset of the native `/tx/<hash>` response shape that the indexer needs.
@@ -42,30 +44,54 @@ pub struct NativeTxResponse {
     pub data: Option<String>,
 }
 
-/// Native REST client.
+/// Native REST client. Holds one or more base URLs and round-robins
+/// requests across them. Single-URL is the common case; multi-URL is used
+/// when the indexer talks directly to multiple fullnodes (bypassing the
+/// public Caddy edge) to spread fetch load across endpoints.
 #[derive(Debug, Clone)]
 pub struct RestClient {
-    base: String,
+    bases: Vec<String>,
+    cursor: Arc<AtomicUsize>,
     http: reqwest::Client,
 }
 
 impl RestClient {
-    /// Build a client pointing at the chain's HTTP base URL (no trailing
-    /// `/tx/...`). Default 10s request timeout.
+    /// Build a client from a comma-separated URL list (or a single URL).
+    /// Each URL is the chain's HTTP base (no `/tx/...` suffix). Default 10s
+    /// request timeout. Errors if no valid URL found.
     pub fn new(base_url: impl Into<String>) -> ChainResult<Self> {
+        let raw = base_url.into();
+        let bases: Vec<String> = raw
+            .split(',')
+            .map(|s| s.trim().trim_end_matches('/').to_owned())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if bases.is_empty() {
+            return Err(ChainError::InvalidArgument(
+                "rest base url is empty".to_string(),
+            ));
+        }
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()?;
         Ok(Self {
-            base: base_url.into().trim_end_matches('/').to_owned(),
+            bases,
+            cursor: Arc::new(AtomicUsize::new(0)),
             http,
         })
+    }
+
+    /// Pick the next base URL via round-robin. Atomic FetchAdd makes this
+    /// lock-free across concurrent fetch tasks.
+    fn next_base(&self) -> &str {
+        let i = self.cursor.fetch_add(1, Ordering::Relaxed);
+        &self.bases[i % self.bases.len()]
     }
 
     /// Fetch a tx by hash. Returns None on 404 so the caller can decide
     /// whether to retry (chain hasn't seen it yet) vs surface as missing.
     pub async fn tx(&self, hash: &Hash) -> ChainResult<Option<NativeTxResponse>> {
-        let url = format!("{}/tx/{}", self.base, hash);
+        let url = format!("{}/tx/{}", self.next_base(), hash);
         let resp = self.http.get(&url).send().await?;
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
@@ -86,7 +112,7 @@ impl RestClient {
     /// jump the cursor straight to `window_start_block` rather than walking
     /// 404s one-by-one.
     pub async fn chain_info(&self) -> ChainResult<ChainInfoResponse> {
-        let url = format!("{}/chain/info", self.base);
+        let url = format!("{}/chain/info", self.next_base());
         let resp = self.http.get(&url).send().await?;
         if !resp.status().is_success() {
             let status = resp.status();
@@ -101,7 +127,7 @@ impl RestClient {
     /// Fetch a block by height with full txs inlined. Returns None on 404
     /// (chain doesn't have this height yet, or asking past pruning window).
     pub async fn block(&self, h: BlockHeight) -> ChainResult<Option<NativeBlockResponse>> {
-        let url = format!("{}/chain/blocks/{}", self.base, h.0);
+        let url = format!("{}/chain/blocks/{}", self.next_base(), h.0);
         let resp = self.http.get(&url).send().await?;
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);

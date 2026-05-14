@@ -117,6 +117,46 @@ pub async fn latest_height(pool: &PgPool) -> DbResult<Option<BlockHeight>> {
     Ok(h.map(BlockHeight))
 }
 
+/// Multi-row batch insert. ON CONFLICT (height) DO NOTHING per row, so a
+/// crash mid-batch on retry hits the existing rows and silently skips them.
+/// Used by the bulk-COPY-style backfill path to amortise transaction
+/// overhead — one commit per batch instead of one per block.
+pub async fn insert_batch<'e, E>(executor: E, blocks_in: &[Block]) -> DbResult<()>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    if blocks_in.is_empty() {
+        return Ok(());
+    }
+    let mut qb = sqlx::QueryBuilder::new(
+        "INSERT INTO blocks (height, hash, parent_hash, timestamp, validator, \
+            gas_used, gas_limit, base_fee, tx_count, state_root, round, justification_signers) ",
+    );
+    qb.push_values(blocks_in.iter(), |mut row, b| {
+        let signers = serde_json::Value::Array(
+            b.justification_signers
+                .iter()
+                .map(|s| serde_json::Value::String(s.clone()))
+                .collect(),
+        );
+        row.push_bind(b.height)
+            .push_bind(&b.hash)
+            .push_bind(&b.parent_hash)
+            .push_bind(b.timestamp)
+            .push_bind(&b.validator)
+            .push_bind(b.gas_used)
+            .push_bind(b.gas_limit)
+            .push_bind(b.base_fee)
+            .push_bind(b.tx_count)
+            .push_bind(&b.state_root)
+            .push_bind(b.round)
+            .push_bind(signers);
+    });
+    qb.push(" ON CONFLICT (height) DO NOTHING");
+    qb.build().execute(executor).await?;
+    Ok(())
+}
+
 /// Delete a block (and dependent txs/logs via FK CASCADE) at a height. Used
 /// by the reorg rewind path.
 pub async fn delete_at<'e, E>(executor: E, h: BlockHeight) -> DbResult<u64>

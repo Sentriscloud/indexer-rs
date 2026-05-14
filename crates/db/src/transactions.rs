@@ -35,6 +35,41 @@ where
     Ok(())
 }
 
+/// Multi-row batch insert. ON CONFLICT (hash) DO NOTHING per row, so a
+/// crash mid-batch on retry hits the existing rows and silently skips them.
+pub async fn insert_batch<'e, E>(executor: E, txs: &[Transaction]) -> DbResult<()>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    if txs.is_empty() {
+        return Ok(());
+    }
+    let mut qb = sqlx::QueryBuilder::new(
+        "INSERT INTO transactions (hash, block_height, tx_index, from_addr, to_addr, value, \
+            gas_limit, gas_used, gas_price, fee, nonce, data, status, contract_address, tx_type) ",
+    );
+    qb.push_values(txs.iter(), |mut row, t| {
+        row.push_bind(&t.hash)
+            .push_bind(t.block_height)
+            .push_bind(t.tx_index)
+            .push_bind(&t.from_addr)
+            .push_bind(&t.to_addr)
+            .push_bind(t.value)
+            .push_bind(t.gas_limit)
+            .push_bind(t.gas_used)
+            .push_bind(t.gas_price)
+            .push_bind(t.fee)
+            .push_bind(t.nonce)
+            .push_bind(&t.data)
+            .push_bind(t.status)
+            .push_bind(&t.contract_address)
+            .push_bind(t.tx_type.as_str());
+    });
+    qb.push(" ON CONFLICT (hash) DO NOTHING");
+    qb.build().execute(executor).await?;
+    Ok(())
+}
+
 /// All txs in a block, ordered by `tx_index`.
 pub async fn for_block(pool: &PgPool, h: BlockHeight) -> DbResult<Vec<Transaction>> {
     let rows = sqlx::query(
