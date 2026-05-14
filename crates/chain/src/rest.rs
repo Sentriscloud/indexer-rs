@@ -58,14 +58,24 @@ pub struct RestClient {
 impl RestClient {
     /// Build a client from a comma-separated URL list (or a single URL).
     /// Each URL is the chain's HTTP base (no `/tx/...` suffix). Default 10s
-    /// request timeout. Errors if no valid URL found.
+    /// request timeout. Errors if any entry fails URL parsing — fail fast
+    /// at construction so a malformed entry can't surface as an intermittent
+    /// runtime failure when round-robin happens to pick it.
     pub fn new(base_url: impl Into<String>) -> ChainResult<Self> {
         let raw = base_url.into();
-        let bases: Vec<String> = raw
-            .split(',')
-            .map(|s| s.trim().trim_end_matches('/').to_owned())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let mut bases: Vec<String> = Vec::new();
+        for entry in raw.split(',') {
+            let trimmed = entry.trim().trim_end_matches('/');
+            if trimmed.is_empty() {
+                continue;
+            }
+            // Validate by parsing — discard the parsed value, keep the
+            // string form for the format!()-based URL composition below.
+            trimmed.parse::<reqwest::Url>().map_err(|e| {
+                ChainError::InvalidArgument(format!("bad rest url '{trimmed}': {e}"))
+            })?;
+            bases.push(trimmed.to_owned());
+        }
         if bases.is_empty() {
             return Err(ChainError::InvalidArgument(
                 "rest base url is empty".to_string(),
