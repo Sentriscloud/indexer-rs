@@ -282,11 +282,17 @@ ok "/blocks with correct token -> 200"
 echo
 note "verifying observability + readyz (no auth)"
 
-# Restart API once more without bearer token but WITH metrics + readyz active
+# Restart API once more without bearer token but WITH metrics + readyz active.
+# Per audit 2026-05-13, /metrics now binds on a separate loopback listener
+# (INDEXER_API_METRICS_BIND, default 127.0.0.1:9080) so it can never leak
+# via the public router. We pick a fresh port + scrape it separately.
+METRICS_PORT=$((API_PORT + 1))
+METRICS_URL="http://127.0.0.1:${METRICS_PORT}"
 kill "$API_PID" 2>/dev/null || true
 wait "$API_PID" 2>/dev/null || true
 DATABASE_URL="$DB_URL" \
 INDEXER_API_BIND="127.0.0.1:${API_PORT}" \
+INDEXER_API_METRICS_BIND="127.0.0.1:${METRICS_PORT}" \
 RUST_LOG="warn" \
     ./target/release/api &
 API_PID=$!
@@ -305,13 +311,18 @@ v=$(curl -fsS "$API_BASE/readyz" | jq -r '.checks.cache')
 [[ "$v" == "disabled" ]] || fail "/readyz.checks.cache != disabled (got '$v')"
 ok "/readyz (pg ok, cache disabled)"
 
-# /metrics exposes Prometheus-format counters after a few requests
+# /metrics is on the loopback-only listener now, not on the public router.
+# Drive a couple of requests through the public API first so the counters
+# have something to render, then scrape from the metrics port.
 curl -fsS "$API_BASE/blocks" >/dev/null
 curl -fsS "$API_BASE/blocks" >/dev/null
-metrics=$(curl -fsS "$API_BASE/metrics")
+# Public router must NOT serve /metrics — confirm that's a 404.
+code=$(curl -s -o /dev/null -w '%{http_code}' "$API_BASE/metrics")
+[[ "$code" == "404" ]] || fail "/metrics leaked on public router (got $code, want 404)"
+metrics=$(curl -fsS "$METRICS_URL/metrics") || fail "metrics listener not reachable on $METRICS_URL"
 echo "$metrics" | grep -q '^indexer_api_requests_total{' || fail "/metrics missing indexer_api_requests_total"
 echo "$metrics" | grep -q '^indexer_api_request_seconds_bucket{' || fail "/metrics missing latency histogram"
-ok "/metrics (Prometheus exposition with request counter + latency histogram)"
+ok "/metrics (loopback listener: counters + latency histogram present, public router 404s)"
 
 # request_id header set on every response (generated server-side; clients
 # pass through if they want).

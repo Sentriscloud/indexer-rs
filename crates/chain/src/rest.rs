@@ -13,6 +13,8 @@
 use crate::error::{ChainError, ChainResult};
 use indexer_domain::{BlockHeight, Hash};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 /// Subset of the native `/tx/<hash>` response shape that the indexer needs.
@@ -42,30 +44,64 @@ pub struct NativeTxResponse {
     pub data: Option<String>,
 }
 
-/// Native REST client.
+/// Native REST client. Holds one or more base URLs and round-robins
+/// requests across them. Single-URL is the common case; multi-URL is used
+/// when the indexer talks directly to multiple fullnodes (bypassing the
+/// public Caddy edge) to spread fetch load across endpoints.
 #[derive(Debug, Clone)]
 pub struct RestClient {
-    base: String,
+    bases: Vec<String>,
+    cursor: Arc<AtomicUsize>,
     http: reqwest::Client,
 }
 
 impl RestClient {
-    /// Build a client pointing at the chain's HTTP base URL (no trailing
-    /// `/tx/...`). Default 10s request timeout.
+    /// Build a client from a comma-separated URL list (or a single URL).
+    /// Each URL is the chain's HTTP base (no `/tx/...` suffix). Default 10s
+    /// request timeout. Errors if any entry fails URL parsing — fail fast
+    /// at construction so a malformed entry can't surface as an intermittent
+    /// runtime failure when round-robin happens to pick it.
     pub fn new(base_url: impl Into<String>) -> ChainResult<Self> {
+        let raw = base_url.into();
+        let mut bases: Vec<String> = Vec::new();
+        for entry in raw.split(',') {
+            let trimmed = entry.trim().trim_end_matches('/');
+            if trimmed.is_empty() {
+                continue;
+            }
+            // Validate by parsing — discard the parsed value, keep the
+            // string form for the format!()-based URL composition below.
+            trimmed.parse::<reqwest::Url>().map_err(|e| {
+                ChainError::InvalidArgument(format!("bad rest url '{trimmed}': {e}"))
+            })?;
+            bases.push(trimmed.to_owned());
+        }
+        if bases.is_empty() {
+            return Err(ChainError::InvalidArgument(
+                "rest base url is empty".to_string(),
+            ));
+        }
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()?;
         Ok(Self {
-            base: base_url.into().trim_end_matches('/').to_owned(),
+            bases,
+            cursor: Arc::new(AtomicUsize::new(0)),
             http,
         })
+    }
+
+    /// Pick the next base URL via round-robin. Atomic FetchAdd makes this
+    /// lock-free across concurrent fetch tasks.
+    fn next_base(&self) -> &str {
+        let i = self.cursor.fetch_add(1, Ordering::Relaxed);
+        &self.bases[i % self.bases.len()]
     }
 
     /// Fetch a tx by hash. Returns None on 404 so the caller can decide
     /// whether to retry (chain hasn't seen it yet) vs surface as missing.
     pub async fn tx(&self, hash: &Hash) -> ChainResult<Option<NativeTxResponse>> {
-        let url = format!("{}/tx/{}", self.base, hash);
+        let url = format!("{}/tx/{}", self.next_base(), hash);
         let resp = self.http.get(&url).send().await?;
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
@@ -86,7 +122,7 @@ impl RestClient {
     /// jump the cursor straight to `window_start_block` rather than walking
     /// 404s one-by-one.
     pub async fn chain_info(&self) -> ChainResult<ChainInfoResponse> {
-        let url = format!("{}/chain/info", self.base);
+        let url = format!("{}/chain/info", self.next_base());
         let resp = self.http.get(&url).send().await?;
         if !resp.status().is_success() {
             let status = resp.status();
@@ -101,7 +137,7 @@ impl RestClient {
     /// Fetch a block by height with full txs inlined. Returns None on 404
     /// (chain doesn't have this height yet, or asking past pruning window).
     pub async fn block(&self, h: BlockHeight) -> ChainResult<Option<NativeBlockResponse>> {
-        let url = format!("{}/chain/blocks/{}", self.base, h.0);
+        let url = format!("{}/chain/blocks/{}", self.next_base(), h.0);
         let resp = self.http.get(&url).send().await?;
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
@@ -222,5 +258,59 @@ mod tests {
     fn rejects_missing_required_field() {
         let raw = r#"{ "txid": "0xabc" }"#;
         assert!(serde_json::from_str::<NativeTxResponse>(raw).is_err());
+    }
+
+    #[test]
+    fn parses_single_url() {
+        let c = RestClient::new("http://a.example/").unwrap();
+        assert_eq!(c.bases, vec!["http://a.example".to_string()]);
+        assert_eq!(c.next_base(), "http://a.example");
+        assert_eq!(c.next_base(), "http://a.example");
+    }
+
+    #[test]
+    fn parses_comma_list_trims_and_normalises() {
+        let c =
+            RestClient::new(" http://a.example/ , http://b.example , ,http://c.example/").unwrap();
+        assert_eq!(
+            c.bases,
+            vec![
+                "http://a.example".to_string(),
+                "http://b.example".to_string(),
+                "http://c.example".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn round_robin_rotates_deterministically() {
+        let c = RestClient::new("http://a.example,http://b.example,http://c.example").unwrap();
+        let picks: Vec<&str> = (0..7).map(|_| c.next_base()).collect();
+        assert_eq!(
+            picks,
+            vec![
+                "http://a.example",
+                "http://b.example",
+                "http://c.example",
+                "http://a.example",
+                "http://b.example",
+                "http://c.example",
+                "http://a.example",
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_empty_input() {
+        assert!(RestClient::new("").is_err());
+        assert!(RestClient::new("  ").is_err());
+        assert!(RestClient::new(", , ").is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_url_at_construction() {
+        // Validation must catch bad entries up front, not on round-robin pick.
+        assert!(RestClient::new("not a url").is_err());
+        assert!(RestClient::new("http://ok.example,not://valid url with spaces").is_err());
     }
 }

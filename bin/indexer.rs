@@ -30,6 +30,12 @@ use tokio_util::sync::CancellationToken;
 struct IndexerConfig {
     database_url: String,
     rpc_url: String,
+    /// Optional separate base URL for the native REST endpoints
+    /// (`/chain/blocks/<n>`, `/tx/<hash>`). Defaults to `rpc_url` when unset.
+    /// Lets us point JSON-RPC at `<host>/rpc` and REST at `<host>` (root)
+    /// when bypassing the Caddy edge that handles the path rewrite.
+    #[serde(default)]
+    rest_url: Option<String>,
     #[serde(default)]
     grpc_url: Option<String>,
     #[serde(default)]
@@ -88,8 +94,10 @@ async fn main() -> anyhow::Result<()> {
     let provider = ChainProvider::http(&cfg.rpc_url)?;
     // Native REST client for `/chain/blocks/<n>` + `/tx/<hash>` — Sentrix's
     // EVM JSON-RPC ignores `full=true` on getBlockByNumber, so block + tx
-    // ingest goes via the native REST path. Same host, different URL space.
-    let rest = RestClient::new(&cfg.rpc_url)?;
+    // ingest goes via the native REST path. REST_URL falls back to RPC_URL;
+    // override when JSON-RPC needs `/rpc` suffix (direct fullnode bypass).
+    let rest_base = cfg.rest_url.as_deref().unwrap_or(&cfg.rpc_url);
+    let rest = RestClient::new(rest_base)?;
     let cancel = CancellationToken::new();
 
     // Analytics flusher (optional). The handle threads into both the

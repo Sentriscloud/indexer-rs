@@ -16,7 +16,7 @@
 //! cancel during a slow fetch returns within the cancel timeout, not after
 //! the in-flight chunk completes.
 
-use crate::block_writer::{BlockBundle, write_block};
+use crate::block_writer::{BlockBundle, batch_write_blocks, write_block};
 use crate::convert::{to_domain_block_from_native, to_domain_log, to_domain_txs_from_native};
 use crate::cursor::{read_cursor, write_cursor};
 use crate::{SyncConfig, SyncError, SyncResult};
@@ -28,10 +28,17 @@ use indexer_domain::BlockHeight;
 use tokio_util::sync::CancellationToken;
 
 /// How many blocks to fetch concurrently in the backfill window.
-/// Each fetch is one REST call + one eth_getLogs call. Writes still
-/// land sequentially per block. 50 is a conservative default — see
-/// `INDEXER_BACKFILL_CONCURRENCY` env var to tune.
+/// Each fetch is one REST call + one eth_getLogs call. Writes land in
+/// batches of `INDEXER_BACKFILL_BATCH` (default 100). 50 is a
+/// conservative default — see `INDEXER_BACKFILL_CONCURRENCY` env var to tune.
 const DEFAULT_BACKFILL_CONCURRENCY: usize = 50;
+
+/// How many fetched bundles to accumulate before flushing as one batched
+/// transaction. Bigger batch = fewer commits + lower fsync overhead;
+/// smaller batch = lower memory + more frequent cursor advance. 100 is a
+/// good middle: ~5MB peak buffer for typical mainnet blocks, single-digit
+/// commits/sec at 500+ b/s.
+const DEFAULT_BACKFILL_BATCH: usize = 100;
 
 fn backfill_concurrency() -> usize {
     std::env::var("INDEXER_BACKFILL_CONCURRENCY")
@@ -39,6 +46,14 @@ fn backfill_concurrency() -> usize {
         .and_then(|v| v.parse().ok())
         .filter(|&n: &usize| n > 0 && n <= 500)
         .unwrap_or(DEFAULT_BACKFILL_CONCURRENCY)
+}
+
+fn backfill_batch_size() -> usize {
+    std::env::var("INDEXER_BACKFILL_BATCH")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n: &usize| n > 0 && n <= 1000)
+        .unwrap_or(DEFAULT_BACKFILL_BATCH)
 }
 
 /// Run the backfill loop until cancellation OR until we reach
@@ -79,7 +94,12 @@ pub async fn run_backfill(
     // concurrent fetch + serial write keeps invariants while saturating
     // the network. INDEXER_BACKFILL_CONCURRENCY env var tunes the pool.
     let concurrency = backfill_concurrency();
-    tracing::info!(concurrency, "backfill: pipelined fetch enabled");
+    let batch_size = backfill_batch_size();
+    tracing::info!(
+        concurrency,
+        batch_size,
+        "backfill: pipelined fetch + batched write enabled"
+    );
 
     let start = cursor.0 + 1;
     let total = (cap - cursor.0) as usize;
@@ -91,32 +111,60 @@ pub async fn run_backfill(
         })
         .buffered(concurrency);
 
+    // Accumulator: bundles wait here until we hit batch_size or stream ends,
+    // then flush as one transaction. 404-gap heights advance the cursor
+    // out-of-band (separate write) so the batch invariant (all heights
+    // present) holds for the bundles that flush together.
+    let mut buf: Vec<BlockBundle> = Vec::with_capacity(batch_size);
     let mut done = 0usize;
     loop {
         // Race cancellation against the next item — a cancel issued while
         // a slow fetch is in flight returns immediately rather than after
         // the chunk completes.
-        let (h, result) = tokio::select! {
+        let next = tokio::select! {
             biased;
             _ = cancel.cancelled() => {
+                // Flush whatever we've accumulated so the cursor reflects
+                // it before we exit; otherwise the next start re-fetches
+                // already-buffered bundles.
+                if !buf.is_empty() {
+                    let highest = buf.iter().map(|b| b.block.height).max().unwrap();
+                    batch_write_blocks(pool, std::mem::take(&mut buf), analytics).await?;
+                    cursor = highest;
+                }
                 tracing::info!(cursor = cursor.0, "backfill: cancelled mid-pipeline");
                 return Ok(cursor);
             }
-            next = fetched.next() => match next {
-                Some(item) => item,
-                None => break,
-            },
+            next = fetched.next() => next,
+        };
+        let (h, result) = match next {
+            Some(item) => item,
+            None => break,
         };
         match result? {
-            Some(bundle) => write_block(pool, bundle, analytics).await?,
+            Some(bundle) => buf.push(bundle),
             None => {
-                // 404 / damaged-block gap (see ingest_one rationale below)
+                // 404 / damaged-block gap. Flush in-flight buffer first so
+                // the gap-cursor advance lands AFTER the data we already
+                // fetched, preserving the spec §5 invariant 2 (cursor never
+                // lands ahead of data).
+                if !buf.is_empty() {
+                    batch_write_blocks(pool, std::mem::take(&mut buf), analytics).await?;
+                    // cursor is overwritten to the gap height below;
+                    // batch_write already advanced the persisted cursor.
+                }
                 tracing::warn!(height = h.0, "backfill: skipping single 404 block");
                 write_cursor(pool, h, 0).await?;
+                cursor = h;
             }
         }
-        cursor = h;
         done += 1;
+        // Flush at batch boundary.
+        if buf.len() >= batch_size {
+            let highest = buf.iter().map(|b| b.block.height).max().unwrap();
+            batch_write_blocks(pool, std::mem::take(&mut buf), analytics).await?;
+            cursor = highest;
+        }
         if done.is_multiple_of(1000) {
             tracing::info!(
                 cursor = cursor.0,
@@ -124,6 +172,12 @@ pub async fn run_backfill(
                 "backfill: pipeline progress"
             );
         }
+    }
+    // Tail flush — anything still buffered after the stream closes.
+    if !buf.is_empty() {
+        let highest = buf.iter().map(|b| b.block.height).max().unwrap();
+        batch_write_blocks(pool, std::mem::take(&mut buf), analytics).await?;
+        cursor = highest;
     }
     tracing::info!(
         cursor = cursor.0,

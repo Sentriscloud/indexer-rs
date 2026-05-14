@@ -28,6 +28,35 @@ where
     Ok(())
 }
 
+/// Multi-row batch insert. ON CONFLICT (block_height, log_index) DO NOTHING
+/// per row, so a crash mid-batch on retry hits the existing rows and silently
+/// skips them.
+pub async fn insert_batch<'e, E>(executor: E, logs_in: &[Log]) -> DbResult<()>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    if logs_in.is_empty() {
+        return Ok(());
+    }
+    let mut qb = sqlx::QueryBuilder::new(
+        "INSERT INTO logs (block_height, tx_hash, log_index, address, topic0, topic1, topic2, topic3, data) ",
+    );
+    qb.push_values(logs_in.iter(), |mut row, l| {
+        row.push_bind(l.block_height)
+            .push_bind(&l.tx_hash)
+            .push_bind(l.log_index)
+            .push_bind(&l.address)
+            .push_bind(&l.topic0)
+            .push_bind(&l.topic1)
+            .push_bind(&l.topic2)
+            .push_bind(&l.topic3)
+            .push_bind(&l.data);
+    });
+    qb.push(" ON CONFLICT (block_height, log_index) DO NOTHING");
+    qb.build().execute(executor).await?;
+    Ok(())
+}
+
 /// All logs for a given tx, ordered by `log_index`.
 pub async fn for_tx(pool: &PgPool, tx_hash: &Hash) -> DbResult<Vec<Log>> {
     let rows = sqlx::query(
