@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-build = "build.rs"
 
 [dependencies]
 indexer-domain = { path = "../domain", version = "0.2.4" }
@@ -17,10 +16,13 @@ alloy-provider.workspace = true
 alloy-rpc-types.workspace = true
 alloy-transport-http.workspace = true
 
-# tonic: gRPC client (generated from proto).
+# tonic: gRPC transport (generated types live in sentrix-proto).
 tonic.workspace = true
-tonic-prost.workspace = true
-prost.workspace = true
+
+# Single source of truth for the sentrix.v1 schema. Replaces the local
+# proto/ + build.rs codegen we used to ship inside this crate; bumps to
+# the schema now flow through `cargo update -p sentrix-proto`.
+sentrix-proto = "0.1.1"
 
 # REST client for native `/tx/<hash>` fetch.
 reqwest = { workspace = true }
@@ -36,11 +38,6 @@ futures.workspace = true
 # Logging + errors.
 tracing.workspace = true
 thiserror.workspace = true
-
-[build-dependencies]
-tonic-build.workspace = true
-tonic-prost-build.workspace = true
-prost-build.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }

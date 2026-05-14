@@ -18,12 +18,10 @@ pub mod provider;
 pub mod rest;
 pub mod retry;
 
-/// Generated tonic / prost types for `sentrix.v1.*`. The build script writes
-/// `sentrix.v1.rs` into `OUT_DIR`; this module simply includes it.
-#[allow(missing_docs, clippy::all)]
-pub mod pb {
-    tonic::include_proto!("sentrix.v1");
-}
+/// Re-export of the canonical `sentrix.v1` protobuf types from the
+/// `sentrix-proto` crate (single source of truth, published on crates.io).
+/// Existing `crate::pb::Foo` call sites keep working unchanged.
+pub use sentrix_proto as pb;
 
 pub use error::{ChainError, ChainResult};
 pub use grpc::GrpcClient;
