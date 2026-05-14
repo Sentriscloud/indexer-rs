@@ -14,8 +14,8 @@ use alloy_primitives::{Address, Bytes};
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rpc_types::{Block, BlockNumberOrTag, Filter, Log, TransactionInput, TransactionRequest};
 use indexer_domain::BlockHeight;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Concrete provider type — alloy 2.0's default HTTP transport (reqwest).
 /// Hidden from callers behind [`ChainProvider`]; exposed via
@@ -41,18 +41,16 @@ impl ChainProvider {
             if trimmed.is_empty() {
                 continue;
             }
-            let parsed = trimmed
-                .parse::<reqwest::Url>()
-                .map_err(|e| ChainError::InvalidArgument(format!("bad rpc url '{trimmed}': {e}")))?;
+            let parsed = trimmed.parse::<reqwest::Url>().map_err(|e| {
+                ChainError::InvalidArgument(format!("bad rpc url '{trimmed}': {e}"))
+            })?;
             let inner = ProviderBuilder::new()
                 .disable_recommended_fillers()
                 .connect_http(parsed);
             inners.push(inner);
         }
         if inners.is_empty() {
-            return Err(ChainError::InvalidArgument(
-                "rpc url is empty".to_string(),
-            ));
+            return Err(ChainError::InvalidArgument("rpc url is empty".to_string()));
         }
         Ok(Self {
             inners,

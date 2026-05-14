@@ -13,8 +13,8 @@
 use crate::error::{ChainError, ChainResult};
 use indexer_domain::{BlockHeight, Hash};
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 /// Subset of the native `/tx/<hash>` response shape that the indexer needs.
