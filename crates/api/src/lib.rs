@@ -121,9 +121,16 @@ pub fn make_router(state: AppState, cfg: RouterConfig) -> Router {
     // /metrics is intentionally NOT merged here. It serves on a separate
     // internal listener (see `metrics_router`) bound to 127.0.0.1 by the
     // bin so the public Caddy proxy can never expose it (audit 2026-05-13).
-    // Drop the handle if the caller passed one — keeps RouterConfig
-    // backwards-compatible while the migration to dual-listener lands.
-    let _ = cfg.metrics_handle;
+    // Old call sites that still pass metrics_handle get a one-shot warn so
+    // the silent-drop is visible in logs; field is kept for ABI compat
+    // until next breaking release.
+    if cfg.metrics_handle.is_some() {
+        tracing::warn!(
+            "RouterConfig.metrics_handle is set but the public router no longer mounts /metrics. \
+             Spawn the internal listener via metrics_router() instead — see bin/api.rs. \
+             The handle is being ignored; this field will be removed in a future release."
+        );
+    }
 
     app.layer(from_fn(observability::track_request))
         .layer(GovernorLayer::new(governor))

@@ -114,8 +114,20 @@ async fn main() -> anyhow::Result<()> {
 
     // Bind /metrics on a loopback-only listener so Caddy/edge proxy can
     // never expose it. Operator scrapes via host-local Prometheus.
+    // Loopback-only is enforced at startup — `0.0.0.0` / public IPs would
+    // re-create the unauth-public-metrics exposure this PR closes.
     if !cfg.indexer_api_metrics_bind.is_empty() {
         let bind = cfg.indexer_api_metrics_bind.clone();
+        let parsed: std::net::SocketAddr = bind
+            .parse()
+            .map_err(|e| anyhow::anyhow!("INDEXER_API_METRICS_BIND parse: {e}"))?;
+        if !parsed.ip().is_loopback() {
+            anyhow::bail!(
+                "INDEXER_API_METRICS_BIND={bind} must be loopback (127.0.0.1/::1). \
+                 /metrics is unauthenticated; binding to a non-loopback address \
+                 would re-expose it via the edge proxy."
+            );
+        }
         let mh = metrics_handle.clone();
         tokio::spawn(async move {
             match tokio::net::TcpListener::bind(&bind).await {
