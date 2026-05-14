@@ -28,13 +28,12 @@ struct EsQuery {
     module: Option<String>,
     action: Option<String>,
     address: Option<String>,
-    /// Etherscan `startblock` — accepted for compat; we don't filter by it
-    /// yet (`for_address` doesn't take a height range).
+    /// Etherscan `startblock` — accepted for compat. Not yet filtered on
+    /// (`for_address` takes no height range); we surface a status=0 error
+    /// rather than silently returning the full set (audit 2026-05-13).
     #[serde(rename = "startblock")]
-    #[allow(dead_code)]
     start_block: Option<String>,
     #[serde(rename = "endblock")]
-    #[allow(dead_code)]
     end_block: Option<String>,
     page: Option<String>,
     offset: Option<String>,
@@ -70,26 +69,38 @@ async fn txlist(state: &SharedState, q: EsQuery) -> EsEnvelope {
         return err("address parameter is required".into());
     };
     let addr = addr.to_lowercase();
-    // Etherscan offset = page size, page = 1-indexed page number. We cap
-    // offset at 100 to align with the rest of the indexer's pagination caps.
+    // Reject params we don't actually honour. Silently ignoring them
+    // returned wrong-window results to clients that pin a height range
+    // (audit 2026-05-13). `page` is rejected too — without offset+page we
+    // can only ever return the first page, so accepting page>1 would lie.
+    let unsupported: Vec<&str> = [
+        ("startblock", q.start_block.as_deref()),
+        ("endblock", q.end_block.as_deref()),
+        ("page", q.page.as_deref()),
+    ]
+    .iter()
+    .filter_map(|(name, v)| match v {
+        Some(s) if !s.is_empty() && *s != "0" && (*name != "page" || *s != "1") => Some(*name),
+        _ => None,
+    })
+    .collect();
+    if !unsupported.is_empty() {
+        return err(format!("param not supported: {}", unsupported.join(",")));
+    }
+    // Etherscan offset = page size. We cap at 100 to align with the rest
+    // of the indexer's pagination caps.
     let offset = q
         .offset
         .as_deref()
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(25)
         .clamp(1, 100);
-    let _page = q
-        .page
-        .as_deref()
-        .and_then(|s| s.parse::<i64>().ok())
-        .unwrap_or(1)
-        .max(1);
     // Phase 5 helper returns newest-first; ?sort=asc would re-sort, but
     // Etherscan default is asc by default — we render newest-first as a
     // pragmatic default since most consumers walk newest-first anyway.
     let rows = match transactions::for_address(&state.pool, &addr, offset).await {
         Ok(r) => r,
-        Err(e) => return err(e.to_string()),
+        Err(e) => return db_err("etherscan.txlist", e),
     };
     let result = rows
         .into_iter()
@@ -140,10 +151,10 @@ async fn getblocknobytime(state: &SharedState, q: EsQuery) -> EsEnvelope {
     match row {
         Ok(Some(r)) => match r.try_get::<i64, _>("height") {
             Ok(h) => ok(Value::String(BlockHeight(h).0.to_string())),
-            Err(e) => err(e.to_string()),
+            Err(e) => db_err("etherscan.getblocknobytime.decode", e),
         },
         Ok(None) => err(format!("no block at-or-{closest} timestamp {ts}")),
-        Err(e) => err(e.to_string()),
+        Err(e) => db_err("etherscan.getblocknobytime", e),
     }
 }
 
@@ -169,6 +180,13 @@ fn err(msg: String) -> EsEnvelope {
         message: msg.clone(),
         result: Value::String(msg),
     }
+}
+
+/// Log full DB error internally, return a generic envelope so we don't
+/// leak schema/connection details to callers (audit 2026-05-13).
+fn db_err<E: std::fmt::Display>(scope: &'static str, e: E) -> EsEnvelope {
+    tracing::error!(scope = scope, error = %e, "etherscan db failure");
+    err("database error".into())
 }
 
 /// Router for the etherscan-compat `/api` entry point.

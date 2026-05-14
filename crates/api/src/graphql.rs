@@ -206,7 +206,7 @@ impl QueryRoot {
         let state = ctx.data::<SharedState>()?.clone();
         let row = blocks::get_by_height(&state.pool, BlockHeight(height))
             .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            .map_err(|e| sanitize_db_err("graphql.block", e))?;
         Ok(row.map(BlockGql::from))
     }
 
@@ -222,7 +222,7 @@ impl QueryRoot {
         let limit = first.map_or(25, |n| n.clamp(1, 100)) as i64;
         let rows = blocks::list_before(&state.pool, before.map(BlockHeight), limit)
             .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            .map_err(|e| sanitize_db_err("graphql.blocks", e))?;
         Ok(rows.into_iter().map(BlockGql::from).collect())
     }
 
@@ -236,18 +236,26 @@ impl QueryRoot {
         let hash = hash.to_lowercase();
         let tx = transactions::get_by_hash(&state.pool, &hash)
             .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            .map_err(|e| sanitize_db_err("graphql.transaction", e))?;
         let Some(tx) = tx else {
             return Ok(None);
         };
         let log_rows = logs::for_tx(&state.pool, &hash)
             .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            .map_err(|e| sanitize_db_err("graphql.transaction.logs", e))?;
         Ok(Some(TransactionWithLogs {
             tx: tx.into(),
             logs: log_rows.into_iter().map(LogGql::from).collect(),
         }))
     }
+}
+
+/// Log full DB error internally, return generic message to client. Mirrors
+/// `ApiError::user_message()` for the REST surface — raw sqlx strings can
+/// leak schema/connection details (audit 2026-05-13).
+fn sanitize_db_err<E: std::fmt::Display>(scope: &'static str, e: E) -> async_graphql::Error {
+    tracing::error!(scope = scope, error = %e, "graphql db failure");
+    async_graphql::Error::new("internal server error")
 }
 
 /// Convenience — silence dead-code warnings on the Json import when the

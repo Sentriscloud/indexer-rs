@@ -43,6 +43,15 @@ ignore = [
     # `rustls-pemfile` is deprecated in favour of `rustls-pki-types`; pulled
     # transitively by reqwest -> rustls. No vulnerability.
     "RUSTSEC-2025-0134",
+    # `rsa` Marvin timing sidechannel via `sqlx-mysql`. We set
+    # `default-features = false` + explicit features (no `any`/`mysql`) so
+    # `cargo tree -e features` shows zero sqlx-mysql nodes and the crate
+    # is never compiled — but `sqlx-macros-core` lists it as an optional
+    # dep so the resolver still pins it in Cargo.lock. cargo-audit reads
+    # the lockfile, hence the false-positive. Drop this when sqlx upstream
+    # restructures sqlx-macros-core to not list inactive backends. Audit
+    # 2026-05-13.
+    "RUSTSEC-2023-0071",
 ]
 
 [sources]

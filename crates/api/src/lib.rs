@@ -116,10 +116,20 @@ pub fn make_router(state: AppState, cfg: RouterConfig) -> Router {
         .with_state(shared.clone());
     let gql = graphql::router(schema).with_state(shared);
 
-    let mut app = Router::new().merge(rest).merge(gql);
+    let app = Router::new().merge(rest).merge(gql);
 
-    if let Some(handle) = cfg.metrics_handle {
-        app = app.merge(routes::metrics::router(handle));
+    // /metrics is intentionally NOT merged here. It serves on a separate
+    // internal listener (see `metrics_router`) bound to 127.0.0.1 by the
+    // bin so the public Caddy proxy can never expose it (audit 2026-05-13).
+    // Old call sites that still pass metrics_handle get a one-shot warn so
+    // the silent-drop is visible in logs; field is kept for ABI compat
+    // until next breaking release.
+    if cfg.metrics_handle.is_some() {
+        tracing::warn!(
+            "RouterConfig.metrics_handle is set but the public router no longer mounts /metrics. \
+             Spawn the internal listener via metrics_router() instead — see bin/api.rs. \
+             The handle is being ignored; this field will be removed in a future release."
+        );
     }
 
     app.layer(from_fn(observability::track_request))
@@ -129,6 +139,14 @@ pub fn make_router(state: AppState, cfg: RouterConfig) -> Router {
         // value, and the response header carries it back even on 4xx/5xx
         // before the auth or governor layers reject.
         .layer(from_fn(error::request_id_middleware))
+}
+
+/// Build the internal /metrics router. Bind this on 127.0.0.1:9080 (or
+/// equivalent loopback-only address) — never expose through the public
+/// proxy (audit 2026-05-13: previously merged into the public router with
+/// no auth gating).
+pub fn metrics_router(handle: PrometheusHandle) -> Router {
+    routes::metrics::router(handle)
 }
 
 /// Time-to-live tier hints exported for route handlers calling
