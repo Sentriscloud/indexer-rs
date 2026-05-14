@@ -130,10 +130,7 @@ pub async fn write_block_batch(
     Ok(())
 }
 
-fn batch_cursor(
-    bundles: &[BlockBundle],
-    cursor_only: &[BlockHeight],
-) -> (BlockHeight, i64) {
+fn batch_cursor(bundles: &[BlockBundle], cursor_only: &[BlockHeight]) -> (BlockHeight, i64) {
     // Track the highest block + its timestamp; cursor-only heights still
     // contribute to the max but carry no timestamp.
     let mut max_h = BlockHeight(i64::MIN);
