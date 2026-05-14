@@ -85,10 +85,7 @@ async fn txlist(state: &SharedState, q: EsQuery) -> EsEnvelope {
     })
     .collect();
     if !unsupported.is_empty() {
-        return err(format!(
-            "param not supported: {}",
-            unsupported.join(",")
-        ));
+        return err(format!("param not supported: {}", unsupported.join(",")));
     }
     // Etherscan offset = page size. We cap at 100 to align with the rest
     // of the indexer's pagination caps.
