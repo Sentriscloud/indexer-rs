@@ -28,6 +28,7 @@ pub mod cursor;
 pub mod reorg;
 pub mod single_flight;
 pub mod tail;
+pub mod token_decode;
 
 mod convert;
 

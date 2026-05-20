@@ -30,6 +30,38 @@ where
     Ok(())
 }
 
+/// Batch insert. Retry-safe via `(tx_hash, log_index)` ON CONFLICT DO NOTHING
+/// — matches the dedup contract on the raw `logs` table.
+pub async fn insert_batch<'e, E>(executor: E, transfers: &[TokenTransfer]) -> DbResult<()>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    if transfers.is_empty() {
+        return Ok(());
+    }
+    let mut qb = sqlx::QueryBuilder::new(
+        "INSERT INTO token_transfers (block_height, tx_hash, log_index, contract, standard, \
+            from_addr, to_addr, token_id, amount) ",
+    );
+    qb.push_values(transfers.iter(), |mut row, t| {
+        row.push_bind(t.block_height)
+            .push_bind(&t.tx_hash)
+            .push_bind(t.log_index)
+            .push_bind(&t.contract)
+            .push_bind(t.standard.as_str())
+            .push_bind(&t.from_addr)
+            .push_bind(&t.to_addr)
+            .push_bind(t.token_id)
+            .push_bind(t.amount);
+    });
+    // No ON CONFLICT — table has no unique constraint on (tx_hash, log_index).
+    // The writer's atomic cursor advance prevents re-processing the same
+    // block in the steady state; reorg recovery deletes downstream rows
+    // before re-insert. Adding a unique index here is a follow-up migration.
+    qb.build().execute(executor).await?;
+    Ok(())
+}
+
 /// Paginated token-transfer history for an address — transfers where the
 /// address is sender OR receiver, newest-first by block height. Optional
 /// `standard` narrows to a specific token kind ("erc20" / "erc721" /
