@@ -212,10 +212,38 @@ async fn fetch_one(
         .map(to_domain_log)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| SyncError::Invalid(e.to_string()))?;
+
+    // 2026-05-20: Sentrix's native /chain/blocks/<n> and eth_getLogs can
+    // disagree — a tx whose effects reverted gets stripped from the block
+    // tx vec but its log envelopes still come back from eth_getLogs. The
+    // `logs.tx_hash` FK then blows the whole batch. Drop logs whose
+    // tx_hash isn't backed by a tx row in this same bundle; they'd be
+    // orphaned anyway.
+    use std::collections::HashSet;
+    let tx_hash_set: HashSet<_> = dom_txs.iter().map(|t| t.hash.clone()).collect();
+    let logs_total = dom_logs.len();
+    let dom_logs: Vec<_> = dom_logs
+        .into_iter()
+        .filter(|l| tx_hash_set.contains(&l.tx_hash))
+        .collect();
+    if dom_logs.len() < logs_total {
+        tracing::debug!(
+            block = h.0,
+            dropped = logs_total - dom_logs.len(),
+            "backfill: dropped orphan logs (tx_hash not in block.txs)"
+        );
+    }
+
+    let dom_token_transfers: Vec<_> = dom_logs
+        .iter()
+        .filter_map(crate::token_decode::decode_transfer)
+        .collect();
+
     Ok(Some(BlockBundle {
         block: dom_block,
         txs: dom_txs,
         logs: dom_logs,
+        token_transfers: dom_token_transfers,
     }))
 }
 
@@ -273,12 +301,28 @@ pub async fn ingest_one(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| SyncError::Invalid(e.to_string()))?;
 
+    // Same orphan-log filter as fetch_one — keep the FK invariant on the
+    // tail path so the live chain doesn't stall the indexer the way the
+    // backfill batch did.
+    use std::collections::HashSet;
+    let tx_hash_set: HashSet<_> = dom_txs.iter().map(|t| t.hash.clone()).collect();
+    let dom_logs: Vec<_> = dom_logs
+        .into_iter()
+        .filter(|l| tx_hash_set.contains(&l.tx_hash))
+        .collect();
+
+    let dom_token_transfers: Vec<_> = dom_logs
+        .iter()
+        .filter_map(crate::token_decode::decode_transfer)
+        .collect();
+
     write_block(
         pool,
         BlockBundle {
             block: dom_block,
             txs: dom_txs,
             logs: dom_logs,
+            token_transfers: dom_token_transfers,
         },
         analytics,
     )

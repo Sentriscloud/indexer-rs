@@ -14,8 +14,8 @@
 use crate::cursor::write_cursor;
 use crate::{SyncError, SyncResult};
 use indexer_analytics::{AnalyticsHandle, RawTxRow};
-use indexer_db::{PgPool, blocks, logs, transactions};
-use indexer_domain::{Block, Log, Transaction};
+use indexer_db::{PgPool, blocks, logs, token_transfers, transactions};
+use indexer_domain::{Block, Log, TokenTransfer, Transaction};
 
 /// Page size for batch inserts. Postgres protocol caps bind params at
 /// ~65k per query; the widest table (transactions, 15 cols) tops out at
@@ -32,6 +32,10 @@ pub struct BlockBundle {
     pub txs: Vec<Transaction>,
     /// All logs emitted during the block's txs, ordered by `log_index`.
     pub logs: Vec<Log>,
+    /// Decoded ERC-20 / ERC-721 transfers from this block's logs. Sync
+    /// layer fills via `token_decode::decode_transfer`; empty for blocks
+    /// with no qualifying events.
+    pub token_transfers: Vec<TokenTransfer>,
 }
 
 /// Write a block bundle + advance the chain-wide cursor in one transaction.
@@ -49,13 +53,16 @@ pub async fn write_block(
     let mut tx = pool.begin().await.map_err(SyncError::from)?;
 
     // Order matters: blocks first (FK target), then transactions (FK target
-    // for logs), then logs.
+    // for logs), then logs, then derived token_transfers.
     blocks::insert(&mut *tx, &b.block).await?;
     for t in &b.txs {
         transactions::insert(&mut *tx, t).await?;
     }
     for l in &b.logs {
         logs::insert(&mut *tx, l).await?;
+    }
+    for tt in &b.token_transfers {
+        token_transfers::insert(&mut *tx, tt).await?;
     }
 
     // Cursor advance shares the transaction so it lands or rolls back with
@@ -146,6 +153,11 @@ pub async fn batch_write_blocks(
     all_txs.sort_by_key(|t| (t.block_height, t.tx_index));
     let mut all_logs: Vec<Log> = bundles.iter().flat_map(|b| b.logs.clone()).collect();
     all_logs.sort_by_key(|l| (l.block_height, l.log_index));
+    let mut all_transfers: Vec<TokenTransfer> = bundles
+        .iter()
+        .flat_map(|b| b.token_transfers.clone())
+        .collect();
+    all_transfers.sort_by_key(|t| (t.block_height, t.log_index));
 
     let mut tx = pool.begin().await.map_err(SyncError::from)?;
     for chunk in all_blocks.chunks(BATCH_INSERT_CHUNK) {
@@ -156,6 +168,9 @@ pub async fn batch_write_blocks(
     }
     for chunk in all_logs.chunks(BATCH_INSERT_CHUNK) {
         logs::insert_batch(&mut *tx, chunk).await?;
+    }
+    for chunk in all_transfers.chunks(BATCH_INSERT_CHUNK) {
+        token_transfers::insert_batch(&mut *tx, chunk).await?;
     }
     write_cursor(&mut *tx, max_height, cursor_ts).await?;
     tx.commit().await.map_err(SyncError::from)?;
