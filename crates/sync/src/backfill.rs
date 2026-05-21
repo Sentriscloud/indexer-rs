@@ -227,7 +227,14 @@ async fn fetch_one(
         .filter(|l| tx_hash_set.contains(&l.tx_hash))
         .collect();
     if dom_logs.len() < logs_total {
-        tracing::debug!(
+        // Raised from debug! to warn! per audit M-5 (2026-05-21).
+        // Orphan logs (tx_hash in eth_getLogs but missing from
+        // `/chain/blocks/<n>`'s tx vec) signal Sentrix-side data
+        // inconsistency — usually a reverted tx whose log envelopes
+        // still get returned. Low-volume warnings are fine; sustained
+        // high-volume warnings here flag a real chain bug worth
+        // investigating, so they should be visible at default log level.
+        tracing::warn!(
             block = h.0,
             dropped = logs_total - dom_logs.len(),
             "backfill: dropped orphan logs (tx_hash not in block.txs)"

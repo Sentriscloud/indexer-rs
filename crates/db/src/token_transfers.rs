@@ -54,10 +54,10 @@ where
             .push_bind(t.token_id)
             .push_bind(t.amount);
     });
-    // No ON CONFLICT — table has no unique constraint on (tx_hash, log_index).
-    // The writer's atomic cursor advance prevents re-processing the same
-    // block in the steady state; reorg recovery deletes downstream rows
-    // before re-insert. Adding a unique index here is a follow-up migration.
+    // ON CONFLICT enabled after migration 0003 added the unique index on
+    // (tx_hash, log_index). Re-insert on reorg replay is now idempotent
+    // at the DB layer in addition to the cursor-based writer guard.
+    qb.push(" ON CONFLICT (tx_hash, log_index) DO NOTHING");
     qb.build().execute(executor).await?;
     Ok(())
 }
