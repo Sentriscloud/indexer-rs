@@ -35,7 +35,23 @@ pub fn decode_transfer(log: &Log) -> Option<TokenTransfer> {
 
     let (standard, token_id, amount) = match log.topic3.as_deref() {
         Some(id_topic) => {
-            // ERC-721: token_id in topic3, data empty (or padding only).
+            // ERC-721: per spec the Transfer event has exactly three
+            // indexed args (from, to, tokenId) and NO unindexed data.
+            // 2026-05-21 (audit M-4): also require data to be absent /
+            // empty. Custom events with three indexed args + non-empty
+            // data SHARE topic0 with ERC-721 Transfer but are not NFT
+            // transfers — decoding them as ERC-721 produced spurious
+            // token_transfers rows with a fabricated `amount = 1`.
+            // Drop those by returning None; if the contract turns out
+            // to be a real NFT we can revisit with a registry probe.
+            let data_empty = log
+                .data
+                .as_deref()
+                .map(|d| d.trim_start_matches("0x").is_empty())
+                .unwrap_or(true);
+            if !data_empty {
+                return None;
+            }
             let token_id = topic_to_u256(id_topic)?;
             (
                 TokenStandard::Erc721,
@@ -150,6 +166,19 @@ mod tests {
     fn skips_malformed_topic() {
         let mut log = base_log();
         log.topic1 = Some("0xshort".into());
+        assert!(decode_transfer(&log).is_none());
+    }
+
+    #[test]
+    fn skips_three_indexed_args_with_nonempty_data() {
+        // Custom event Transfer(address,address,address,uint256) emits the
+        // same topic0 selector as ERC-721 Transfer but carries unindexed
+        // data. Audit M-4 requires we NOT decode this as ERC-721 — the
+        // resulting `amount = 1` row would be a fabrication.
+        let mut log = base_log();
+        log.topic3 =
+            Some("0x0000000000000000000000000000000000000000000000000000000000000007".into());
+        // Same data as ERC-20 base_log: non-empty 32-byte payload.
         assert!(decode_transfer(&log).is_none());
     }
 }
