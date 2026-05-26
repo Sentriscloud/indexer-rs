@@ -1,0 +1,39 @@
+# Testnet override for indexer-rs.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.testnet.yml \
+#                  --env-file compose.testnet.env \
+#                  --project-name indexer-rs-testnet \
+#                  up -d
+#
+# Postgres on :5437 (avoids :5432 used by TS indexer's pg, and :5436
+# used by the mainnet indexer-rs override). API on :8089 (avoids :8080
+# from mainnet override + code-server on :8080).
+#
+# Restored 2026-05-26 after the gRPC tail reconnect-loop incident.
+# Original file was deleted at some point during the 2026-05-22 testnet
+# stack reshuffles; the running testnet container was orphaned from its
+# compose context until this restore. compose.testnet.env carries the
+# canonical GRPC_URL fix (`http://127.0.0.1:50055` instead of the public
+# Cloudflare-proxied URL — see that file for the why).
+
+services:
+  postgres:
+    ports: !override
+      - "127.0.0.1:5437:5432"
+
+  indexer:
+    image: indexer-rs:erc20-handler
+    # network_mode: host so 127.0.0.1:50055 (testnet fullnode-1 gRPC)
+    # resolves to the host's loopback instead of the container's own.
+    # Same reason GRPC_URL is the local URL in compose.testnet.env.
+    network_mode: host
+    env_file:
+      - ./compose.testnet.env
+
+  api:
+    image: indexer-rs:erc20-handler
+    ports: !override
+      - "127.0.0.1:8089:8080"
+    env_file:
+      - ./compose.testnet.env
