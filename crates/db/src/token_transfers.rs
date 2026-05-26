@@ -4,9 +4,8 @@ use crate::{DbResult, PgPool};
 use indexer_domain::{BlockHeight, LogIndex, TokenStandard, TokenTransfer, Wei};
 use sqlx::Row;
 
-/// Insert a single decoded transfer. The `(tx_hash, log_index)` pair is
-/// effectively unique for the source log, but the table doesn't pin a unique
-/// constraint on it (drizzle didn't either) — the worker dedupes upstream.
+/// Insert a single decoded transfer. Retry-safe via `(tx_hash, log_index)`
+/// ON CONFLICT DO NOTHING — matches the batch insert path.
 pub async fn insert<'e, E>(executor: E, t: &TokenTransfer) -> DbResult<()>
 where
     E: sqlx::PgExecutor<'e>,
@@ -14,7 +13,8 @@ where
     sqlx::query(
         "INSERT INTO token_transfers (block_height, tx_hash, log_index, contract, standard, \
             from_addr, to_addr, token_id, amount) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+         ON CONFLICT (tx_hash, log_index) DO NOTHING",
     )
     .bind(t.block_height)
     .bind(&t.tx_hash)
