@@ -39,4 +39,5 @@ Cargo.lock.bak*
 .DS_Store
 Thumbs.db
 compose.env
+compose.testnet.env
 docker-compose.override.yml
