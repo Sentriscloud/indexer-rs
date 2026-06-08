@@ -5,6 +5,7 @@
 pub mod address;
 pub mod blocks;
 pub mod coinblast;
+pub mod contracts;
 pub mod etherscan;
 pub mod health;
 pub mod leaderboards;

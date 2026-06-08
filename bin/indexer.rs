@@ -96,6 +96,17 @@ async fn main() -> anyhow::Result<()> {
     let pool = connect(&pool_cfg).await?;
     migrate(&pool).await?;
 
+    // One-time contract-history backfill (no-op once `contracts` is populated).
+    // Runs in the background so it never blocks the sync loops on a large chain.
+    {
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            if let Err(e) = indexer_sync::block_writer::backfill_contracts(&pool).await {
+                tracing::warn!(error = %e, "contracts history backfill failed");
+            }
+        });
+    }
+
     let provider = ChainProvider::http(&cfg.rpc_url)?;
     // Native REST client for `/chain/blocks/<n>` + `/tx/<hash>` — Sentrix's
     // EVM JSON-RPC ignores `full=true` on getBlockByNumber, so block + tx

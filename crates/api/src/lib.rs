@@ -112,6 +112,7 @@ pub fn make_router(state: AppState, cfg: RouterConfig) -> Router {
         .merge(routes::leaderboards::router())
         .merge(routes::coinblast::router())
         .merge(routes::stats::router())
+        .merge(routes::contracts::router())
         .merge(routes::etherscan::router())
         .with_state(shared.clone());
     let gql = graphql::router(schema).with_state(shared);
