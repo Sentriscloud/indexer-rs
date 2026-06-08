@@ -52,6 +52,10 @@ struct IndexerConfig {
     indexer_analytics_flush_secs: u64,
     #[serde(default = "default_stats_refresh_secs")]
     indexer_stats_refresh_secs: u64,
+    #[serde(default = "default_contract_detect_interval_secs")]
+    indexer_contract_detect_interval_secs: u64,
+    #[serde(default = "default_contract_detect_batch")]
+    indexer_contract_detect_batch: i64,
 }
 
 fn default_network() -> String {
@@ -71,6 +75,12 @@ fn default_analytics_flush_secs() -> u64 {
 }
 fn default_stats_refresh_secs() -> u64 {
     300
+}
+fn default_contract_detect_interval_secs() -> u64 {
+    4
+}
+fn default_contract_detect_batch() -> i64 {
+    10
 }
 
 #[tokio::main]
@@ -96,13 +106,20 @@ async fn main() -> anyhow::Result<()> {
     let pool = connect(&pool_cfg).await?;
     migrate(&pool).await?;
 
-    // One-time contract-history backfill (no-op once `contracts` is populated).
-    // Runs in the background so it never blocks the sync loops on a large chain.
+    // One-time address-history backfill: seed `addresses` from every from/to
+    // address already in `transactions` so the contract detector can classify
+    // historical addresses too. No-op once `addresses` is populated. Runs in the
+    // background — the GROUP BY over all txs is heavy on a large chain.
     {
         let pool = pool.clone();
         tokio::spawn(async move {
-            if let Err(e) = indexer_sync::block_writer::backfill_contracts(&pool).await {
-                tracing::warn!(error = %e, "contracts history backfill failed");
+            match indexer_db::addresses::count(&pool).await {
+                Ok(0) => match indexer_db::addresses::backfill_from_transactions(&pool).await {
+                    Ok(n) => tracing::info!(inserted = n, "addresses: history backfill complete"),
+                    Err(e) => tracing::warn!(error = %e, "addresses history backfill failed"),
+                },
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "addresses backfill: count failed"),
             }
         });
     }
@@ -271,11 +288,27 @@ async fn main() -> anyhow::Result<()> {
         })
     };
 
+    // Contract detector: lazily classify `addresses` (is_contract + code_hash)
+    // via eth_getCode, rate-limited, so /contracts/* fills over time.
+    let detector_handle = {
+        let pool = pool.clone();
+        let provider = provider.clone();
+        let cancel = cancel.clone();
+        let interval = Duration::from_secs(cfg.indexer_contract_detect_interval_secs);
+        let batch = cfg.indexer_contract_detect_batch;
+        tokio::spawn(async move {
+            indexer_sync::run_contract_detector(&pool, &provider, interval, batch, cancel)
+                .await
+                .map_err(anyhow::Error::from)
+        })
+    };
+
     shutdown_signal().await;
     tracing::info!("indexer: shutdown signal received; cancelling workers");
     cancel.cancel();
 
     let _ = stats_refresh_handle.await?;
+    let _ = detector_handle.await?;
     let _ = backfill_handle.await?;
     let _ = coinblast_handle.await?;
     if let Some(t) = tail_handle {

@@ -7,11 +7,11 @@
 
 #![cfg_attr(not(test), warn(missing_docs))]
 
+pub mod addresses;
 pub mod blocks;
 pub mod cb_queries;
 pub mod cb_tokens;
 pub mod cb_trades;
-pub mod contracts;
 pub mod logs;
 pub mod meta;
 pub mod stats;

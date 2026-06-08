@@ -24,6 +24,7 @@
 
 pub mod backfill;
 pub mod block_writer;
+pub mod contract_detect;
 pub mod cursor;
 pub mod reorg;
 pub mod single_flight;
@@ -33,6 +34,7 @@ pub mod token_decode;
 mod convert;
 
 pub use backfill::run_backfill;
+pub use contract_detect::run_contract_detector;
 pub use cursor::{LAST_SYNCED_HEIGHT_KEY, read_cursor, write_cursor};
 pub use single_flight::SingleFlight;
 pub use tail::{TailExit, run_tail};

@@ -1,5 +1,5 @@
 //! `/contracts/recent|pioneers|stats` — contract leaderboards from the
-//! `contracts` table (migration 0004). Response shape
+//! `addresses` table (migration 0005), `WHERE is_contract = true`. Response shape
 //! `{"contracts":[{rank, address, first_seen_block, last_seen_block, code_hash}]}`,
 //! matching the legacy indexer / the explorer's expected contract.
 
@@ -9,7 +9,7 @@ use crate::{CacheTier, SharedState, cached};
 use axum::extract::{Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
-use indexer_db::contracts;
+use indexer_db::addresses;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
@@ -39,7 +39,7 @@ async fn load(
     key: &str,
 ) -> ApiResult<Json<ContractsResponse>> {
     let resp: ContractsResponse = cached::get_or_load(state, key, CacheTier::Chain, || async {
-        let rows = contracts::list(&state.pool, limit, ascending).await?;
+        let rows = addresses::list_contracts(&state.pool, limit, ascending).await?;
         Ok::<_, ApiError>(ContractsResponse {
             contracts: rows
                 .into_iter()
