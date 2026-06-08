@@ -49,7 +49,16 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2
+
+      # Install cargo-deny from a cached prebuilt binary instead of the
+      # cargo-deny-action's per-run Docker build (apk + curl download of the
+      # musl binary), which flaked twice on transient apk/GH-release hiccups.
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@da71d5095c1b175e60393b8d36727208ae905210 # cargo-deny
         with:
-          command: check
-          arguments: --all-features
+          tool: cargo-deny
+
+      - run: cargo deny check --all-features
