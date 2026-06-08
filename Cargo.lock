@@ -2820,7 +2820,7 @@ dependencies = [
 
 [[package]]
 name = "indexer-analytics"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "clickhouse",
  "indexer-domain",
@@ -2834,7 +2834,7 @@ dependencies = [
 
 [[package]]
 name = "indexer-api"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "async-graphql",
  "async-graphql-axum",
@@ -2859,7 +2859,7 @@ dependencies = [
 
 [[package]]
 name = "indexer-bin"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "anyhow",
  "axum",
@@ -2884,7 +2884,7 @@ dependencies = [
 
 [[package]]
 name = "indexer-cache"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "fred",
  "parking_lot",
@@ -2897,7 +2897,7 @@ dependencies = [
 
 [[package]]
 name = "indexer-chain"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "alloy-primitives",
  "alloy-provider",
@@ -2917,7 +2917,7 @@ dependencies = [
 
 [[package]]
 name = "indexer-coinblast"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types",
@@ -2935,7 +2935,7 @@ dependencies = [
 
 [[package]]
 name = "indexer-db"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "indexer-domain",
  "serde_json",
@@ -2947,7 +2947,7 @@ dependencies = [
 
 [[package]]
 name = "indexer-domain"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "alloy-primitives",
  "hex",
@@ -2959,11 +2959,11 @@ dependencies = [
 
 [[package]]
 name = "indexer-handlers"
-version = "0.2.6"
+version = "0.2.7"
 
 [[package]]
 name = "indexer-sync"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types",

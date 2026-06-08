@@ -8,10 +8,10 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-indexer-domain = { path = "../domain", version = "0.2.6" }
-indexer-db = { path = "../db", version = "0.2.6" }
-indexer-chain = { path = "../chain", version = "0.2.6" }
-indexer-analytics = { path = "../analytics", version = "0.2.6" }
+indexer-domain = { path = "../domain", version = "0.2.7" }
+indexer-db = { path = "../db", version = "0.2.7" }
+indexer-chain = { path = "../chain", version = "0.2.7" }
+indexer-analytics = { path = "../analytics", version = "0.2.7" }
 
 # alloy types we re-shape into our domain types.
 alloy-primitives.workspace = true
