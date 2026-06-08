@@ -61,4 +61,5 @@ jobs:
         with:
           tool: cargo-deny
 
-      - run: cargo deny check --all-features
+      # `--all-features` is a global (cargo-metadata) flag → must precede the subcommand.
+      - run: cargo deny --all-features check
