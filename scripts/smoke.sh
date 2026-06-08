@@ -183,6 +183,12 @@ v=$(curl -fsS "$API_BASE/whale/transfers" | jq -r '.transfers[0].hash')
     fail "/whale/transfers top != txaaaa (got '$v')"
 ok "/whale/transfers (sorted by value)"
 
+# /whale/tx -> alias of /whale/transfers (legacy path name the frontend uses)
+v=$(curl -fsS "$API_BASE/whale/tx" | jq -r '.transfers[0].hash')
+[[ "$v" == "0xtxaaaa00000000000000000000000000000000000000000000000000000000aa" ]] || \
+    fail "/whale/tx alias top != txaaaa (got '$v')"
+ok "/whale/tx (alias of /whale/transfers)"
+
 # /coinblast/tokens -> 1 curve
 v=$(curl -fsS "$API_BASE/coinblast/tokens" | jq -r '.tokens | length')
 [[ "$v" == "1" ]] || fail "/coinblast/tokens len != 1 (got $v)"
@@ -202,14 +208,18 @@ v=$(curl -fsS "$API_BASE/coinblast/trades" | jq -r '.trades[0].type')
 [[ "$v" == "sell" ]] || fail "/coinblast/trades[0].type != sell (got '$v')"
 ok "/coinblast/trades (newest first)"
 
-# /stats/daily -> 3 day rows (each fixture block is 86400s apart = distinct day)
-v=$(curl -fsS "$API_BASE/stats/daily" | jq -r '.daily | length')
+# /stats/daily -> bare array of 3 day rows (each fixture block 86400s apart =
+# distinct day), newest first. Shape: [{date, blocks, transactions}].
+v=$(curl -fsS "$API_BASE/stats/daily" | jq -r 'length')
 [[ "$v" == "3" ]] || fail "/stats/daily len != 3 (got $v)"
-# Highest bucket should be the newest (block 3 day).
-v=$(curl -fsS "$API_BASE/stats/daily" | jq -r '.daily[0].day_bucket | tonumber')
-prev=$(curl -fsS "$API_BASE/stats/daily" | jq -r '.daily[1].day_bucket | tonumber')
-[[ "$v" -gt "$prev" ]] || fail "/stats/daily not ordered DESC (got $v <= $prev)"
-ok "/stats/daily (3 day buckets, ordered DESC)"
+# Newest day first — ISO dates sort lexically.
+v=$(curl -fsS "$API_BASE/stats/daily" | jq -r '.[0].date')
+prev=$(curl -fsS "$API_BASE/stats/daily" | jq -r '.[1].date')
+[[ "$v" > "$prev" ]] || fail "/stats/daily not ordered DESC by date (got $v <= $prev)"
+# Counts are numbers, not decimal strings.
+v=$(curl -fsS "$API_BASE/stats/daily" | jq -r '.[0].blocks | type')
+[[ "$v" == "number" ]] || fail "/stats/daily blocks not numeric (got $v)"
+ok "/stats/daily (bare array, 3 day buckets, ordered DESC)"
 
 # /api?module=account&action=txlist (etherscan compat)
 v=$(curl -fsS "$API_BASE/api?module=account&action=txlist&address=0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef" | jq -r '.status')
