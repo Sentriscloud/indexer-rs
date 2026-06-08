@@ -8,9 +8,9 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-indexer-domain = { path = "../domain", version = "0.2.4" }
-indexer-db = { path = "../db", version = "0.2.4" }
-indexer-chain = { path = "../chain", version = "0.2.4" }
+indexer-domain = { path = "../domain", version = "0.2.6" }
+indexer-db = { path = "../db", version = "0.2.6" }
+indexer-chain = { path = "../chain", version = "0.2.6" }
 
 # alloy: log filtering + ABI event decode via sol! macro.
 alloy-primitives.workspace = true
