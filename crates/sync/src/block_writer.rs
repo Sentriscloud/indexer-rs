@@ -13,45 +13,29 @@
 
 use crate::cursor::write_cursor;
 use crate::{SyncError, SyncResult};
-use alloy_primitives::Address;
 use indexer_analytics::{AnalyticsHandle, RawTxRow};
-use indexer_db::{PgPool, blocks, contracts, logs, token_transfers, transactions};
+use indexer_db::{PgPool, addresses, blocks, logs, token_transfers, transactions};
 use indexer_domain::{Block, Log, TokenTransfer, Transaction};
+use std::collections::HashMap;
 
-/// CREATE-address of a contract-creation tx (`to_addr IS NULL`):
-/// `keccak(rlp(sender, nonce))[12:]`. Lowercase 0x-hex to match the indexer's
-/// address casing. `None` if the sender doesn't parse or the nonce is negative.
-fn created_contract_address(from: &str, nonce: i64) -> Option<String> {
-    let sender: Address = from.parse().ok()?;
-    let nonce = u64::try_from(nonce).ok()?;
-    Some(sender.create(nonce).to_string().to_lowercase())
-}
-
-/// One-time history backfill for `/contracts`: scan creation txs already in
-/// `transactions` (`to_addr IS NULL`), compute their CREATE addresses, and
-/// populate the `contracts` table. No-op once the table has rows — the
-/// steady-state block writer maintains it thereafter. Safe to call on every
-/// boot (the count guard makes repeats cheap).
-pub async fn backfill_contracts(pool: &PgPool) -> SyncResult<()> {
-    if contracts::count(pool).await? > 0 {
-        return Ok(());
-    }
-    let creations = contracts::creation_txs(pool).await?;
-    if creations.is_empty() {
-        return Ok(());
-    }
-    let total = creations.len();
-    let mut tx = pool.begin().await.map_err(SyncError::from)?;
-    let mut written = 0usize;
-    for c in &creations {
-        if let Some(addr) = created_contract_address(&c.from_addr, c.nonce) {
-            contracts::upsert_creation(&mut *tx, &addr, c.block_height, &c.hash).await?;
-            written += 1;
+/// Collect every from/to address in `txs` for the `addresses` registry, deduped
+/// to one `(address, earliest-block)` per address so the batch upsert never hits
+/// the same ON CONFLICT target twice. New rows seed `first_seen_block`; the
+/// contract detector classifies them (is_contract/code_hash) afterwards.
+fn tx_addresses(txs: &[Transaction]) -> Vec<(String, i64)> {
+    let mut seen: HashMap<String, i64> = HashMap::new();
+    for t in txs {
+        let h = t.block_height.0;
+        seen.entry(t.from_addr.clone())
+            .and_modify(|b| *b = (*b).min(h))
+            .or_insert(h);
+        if let Some(to) = &t.to_addr {
+            seen.entry(to.clone())
+                .and_modify(|b| *b = (*b).min(h))
+                .or_insert(h);
         }
     }
-    tx.commit().await.map_err(SyncError::from)?;
-    tracing::info!(total, written, "contracts: history backfill complete");
-    Ok(())
+    seen.into_iter().collect()
 }
 
 /// Page size for batch inserts. Postgres protocol caps bind params at
@@ -94,13 +78,9 @@ pub async fn write_block(
     blocks::insert(&mut *tx, &b.block).await?;
     for t in &b.txs {
         transactions::insert(&mut *tx, t).await?;
-        // Contract creation (no recipient) → record for /contracts leaderboards.
-        if t.to_addr.is_none()
-            && let Some(addr) = created_contract_address(&t.from_addr, t.nonce)
-        {
-            contracts::upsert_creation(&mut *tx, &addr, t.block_height.0, &t.hash).await?;
-        }
     }
+    // Register from/to addresses for the contract detector (/contracts).
+    addresses::upsert_batch(&mut *tx, &tx_addresses(&b.txs)).await?;
     for l in &b.logs {
         logs::insert(&mut *tx, l).await?;
     }
@@ -209,13 +189,9 @@ pub async fn batch_write_blocks(
     for chunk in all_txs.chunks(BATCH_INSERT_CHUNK) {
         transactions::insert_batch(&mut *tx, chunk).await?;
     }
-    // Contract creations (no recipient) → /contracts leaderboards.
-    for t in &all_txs {
-        if t.to_addr.is_none()
-            && let Some(addr) = created_contract_address(&t.from_addr, t.nonce)
-        {
-            contracts::upsert_creation(&mut *tx, &addr, t.block_height.0, &t.hash).await?;
-        }
+    // Register from/to addresses for the contract detector (/contracts).
+    for chunk in tx_addresses(&all_txs).chunks(BATCH_INSERT_CHUNK) {
+        addresses::upsert_batch(&mut *tx, chunk).await?;
     }
     for chunk in all_logs.chunks(BATCH_INSERT_CHUNK) {
         logs::insert_batch(&mut *tx, chunk).await?;
@@ -254,28 +230,4 @@ pub async fn batch_write_blocks(
         }
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::created_contract_address;
-
-    #[test]
-    fn create_address_matches_known_vector() {
-        // Canonical CREATE example (sender, nonce 0) → fixed contract address.
-        let got = created_contract_address("0x6ac7ea33f8831ea9dcc53393aaa88b25a785dbf0", 0);
-        assert_eq!(
-            got.as_deref(),
-            Some("0xcd234a471b72ba2f1ccf0a70fcaba648a5eecd8d")
-        );
-    }
-
-    #[test]
-    fn create_address_rejects_bad_sender_and_nonce() {
-        assert_eq!(created_contract_address("not-an-address", 0), None);
-        assert_eq!(
-            created_contract_address("0x6ac7ea33f8831ea9dcc53393aaa88b25a785dbf0", -1),
-            None
-        );
-    }
 }

@@ -123,6 +123,13 @@ impl ChainProvider {
         self.next().get_logs(&filter).await.map_err(rpc_err)
     }
 
+    /// `eth_getCode(address, latest)` — the account's deployed bytecode. Empty
+    /// (`0x`) for an EOA, non-empty for a contract. Used by the contract
+    /// detector to classify `addresses.is_contract` + `code_hash`.
+    pub async fn get_code(&self, address: Address) -> ChainResult<Bytes> {
+        self.next().get_code_at(address).await.map_err(rpc_err)
+    }
+
     /// `eth_call` against `to` with abi-encoded `data`. Returns the raw
     /// return bytes; caller decodes via `alloy_sol_types`. Used by the
     /// CoinBlast worker to validate orphan curves (probe `token()` etc).

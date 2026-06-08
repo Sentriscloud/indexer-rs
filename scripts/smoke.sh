@@ -221,14 +221,15 @@ v=$(curl -fsS "$API_BASE/stats/daily" | jq -r '.[0].blocks | type')
 [[ "$v" == "number" ]] || fail "/stats/daily blocks not numeric (got $v)"
 ok "/stats/daily (bare array, 3 day buckets, ordered DESC)"
 
-# /contracts/recent -> 1 fixture contract; shape {contracts:[{address,first_seen_block,...}]}
+# /contracts/recent -> only the is_contract=true row (EOA fixture excluded);
+# shape {contracts:[{address,first_seen_block,last_seen_block,code_hash}]}.
 v=$(curl -fsS "$API_BASE/contracts/recent" | jq -r '.contracts | length')
-[[ "$v" == "1" ]] || fail "/contracts/recent len != 1 (got $v)"
+[[ "$v" == "1" ]] || fail "/contracts/recent len != 1 — EOA leaked? (got $v)"
 v=$(curl -fsS "$API_BASE/contracts/recent" | jq -r '.contracts[0].address')
 [[ "$v" == "0xc0ffee0000000000000000000000000000000001" ]] || fail "/contracts/recent addr (got '$v')"
 v=$(curl -fsS "$API_BASE/contracts/recent" | jq -r '.contracts[0].code_hash')
-[[ "$v" == "null" ]] || fail "/contracts/recent code_hash != null (got '$v')"
-ok "/contracts/recent (shape + null code_hash)"
+[[ "$v" != "null" && -n "$v" ]] || fail "/contracts/recent code_hash missing (got '$v')"
+ok "/contracts/recent (is_contract filter + code_hash)"
 # /contracts/pioneers + /contracts/stats share the shape.
 v=$(curl -fsS "$API_BASE/contracts/pioneers" | jq -r '.contracts[0].address')
 [[ "$v" == "0xc0ffee0000000000000000000000000000000001" ]] || fail "/contracts/pioneers addr (got '$v')"

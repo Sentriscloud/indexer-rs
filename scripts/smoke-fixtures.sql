@@ -102,11 +102,13 @@ INSERT INTO cb_trades (curve_address, token_address, type, trader_address, srx_a
      500000000, 500000000000000000, 500000,
      3, '0xtxdddd00000000000000000000000000000000000000000000000000000000dd', 0);
 
--- ── contracts (Phase 2 leaderboards) ──────────────────────────────────
--- One fixture contract (code_hash NULL → frontend renders "—").
-INSERT INTO contracts (address, first_seen_block, last_seen_block, code_hash, tx_count, created_tx_hash) VALUES
-    ('0xc0ffee0000000000000000000000000000000001', 2, 3, NULL, 1,
-     '0xtxcreate0000000000000000000000000000000000000000000000000000cc');
+-- ── addresses (contract leaderboards) ─────────────────────────────────
+-- One classified contract + one classified EOA. /contracts/* must return only
+-- the contract (is_contract = true), proving the filter works.
+INSERT INTO addresses (address, first_seen_block, last_seen_block, is_contract, code_hash) VALUES
+    ('0xc0ffee0000000000000000000000000000000001', 2, 3, true,
+     '0xc0dec0dec0dec0dec0dec0dec0dec0dec0dec0dec0dec0dec0dec0dec0dec0de'),
+    ('0xead0ead0ead0ead0ead0ead0ead0ead0ead0ead0', 1, 1, false, '0x');
 
 -- ── refresh stats_daily_mv ─────────────────────────────────────────────
 -- Three blocks 86400s apart = three distinct day_buckets (19675, 19676, 19677).
