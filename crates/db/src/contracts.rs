@@ -10,8 +10,11 @@ use sqlx::Row;
 /// legacy indexer / the explorer's expected shape.
 #[derive(Debug, Clone)]
 pub struct ContractRow {
+    /// Contract address (lowercase 0x-hex).
     pub address: String,
+    /// Block the contract was created in.
     pub first_seen_block: i64,
+    /// Most recent block the contract was seen in.
     pub last_seen_block: i64,
     /// Reserved for a later eth_getCode pass; NULL renders as "—" in the UI.
     pub code_hash: Option<String>,
@@ -79,9 +82,13 @@ pub async fn count(pool: &PgPool) -> DbResult<i64> {
 /// Stream creation txs already in `transactions` (to_address IS NULL) so the
 /// sync layer can compute their addresses + backfill `contracts` once.
 pub struct CreationTx {
+    /// Creator (sender) address.
     pub from_addr: String,
+    /// Sender nonce at creation time.
     pub nonce: i64,
+    /// Block the creation tx landed in.
     pub block_height: i64,
+    /// Creation tx hash.
     pub hash: String,
 }
 
