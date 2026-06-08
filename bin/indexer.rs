@@ -50,6 +50,8 @@ struct IndexerConfig {
     indexer_backfill_loop_secs: u64,
     #[serde(default = "default_analytics_flush_secs")]
     indexer_analytics_flush_secs: u64,
+    #[serde(default = "default_stats_refresh_secs")]
+    indexer_stats_refresh_secs: u64,
 }
 
 fn default_network() -> String {
@@ -66,6 +68,9 @@ fn default_clickhouse_table() -> String {
 }
 fn default_analytics_flush_secs() -> u64 {
     15
+}
+fn default_stats_refresh_secs() -> u64 {
+    300
 }
 
 #[tokio::main]
@@ -221,10 +226,45 @@ async fn main() -> anyhow::Result<()> {
         })
     };
 
+    // Stats MV refresh loop. `stats_daily_mv` (migration 0002) has no
+    // auto-refresh; without this it stays empty and `/stats/daily` returns
+    // nothing. The first tick fires immediately and does a plain (blocking)
+    // refresh — Postgres rejects `REFRESH ... CONCURRENTLY` on a
+    // never-populated MV — then every subsequent tick uses CONCURRENTLY so
+    // reads are never locked out.
+    let stats_refresh_handle = {
+        let pool = pool.clone();
+        let cancel = cancel.clone();
+        let interval = Duration::from_secs(cfg.indexer_stats_refresh_secs);
+        tokio::spawn(async move {
+            let mut populated = false;
+            let mut tick = tokio::time::interval(interval);
+            loop {
+                tokio::select! {
+                    _ = cancel.cancelled() => return Ok::<(), anyhow::Error>(()),
+                    _ = tick.tick() => {
+                        let res = if populated {
+                            indexer_db::stats::refresh(&pool).await
+                        } else {
+                            indexer_db::stats::refresh_full(&pool).await
+                        };
+                        match res {
+                            Ok(()) => populated = true,
+                            Err(e) => {
+                                tracing::warn!(error = %e, "stats_daily_mv refresh failed");
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    };
+
     shutdown_signal().await;
     tracing::info!("indexer: shutdown signal received; cancelling workers");
     cancel.cancel();
 
+    let _ = stats_refresh_handle.await?;
     let _ = backfill_handle.await?;
     let _ = coinblast_handle.await?;
     if let Some(t) = tail_handle {

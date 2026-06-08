@@ -3,27 +3,27 @@
 use crate::{DbResult, PgPool};
 use sqlx::Row;
 
-/// One row of `/stats/daily` — pre-aggregated per day_bucket.
+/// One row of `/stats/daily`. Field names + types mirror the legacy TS
+/// indexer's response (`date` ISO-8601 day, numeric `blocks`/`transactions`)
+/// so the explorer frontend consumes either indexer interchangeably. The
+/// calendar date is derived from the `day_bucket` (epoch-day) in SQL via
+/// `to_timestamp(day_bucket * 86400)` at UTC.
 #[derive(Debug, Clone)]
 pub struct StatsDailyRow {
-    /// `floor(timestamp / 86400)` — chain-day bucket.
-    pub day_bucket: i64,
+    /// `YYYY-MM-DD` (UTC) for the bucket.
+    pub date: String,
     /// Blocks that landed in this bucket.
-    pub block_count: i64,
+    pub blocks: i64,
     /// Sum of `blocks.tx_count` over the bucket.
-    pub tx_count: i64,
-    /// Sum of `blocks.gas_used` over the bucket.
-    pub gas_used: i64,
-    /// First (lowest) block height in the bucket.
-    pub first_height: i64,
-    /// Last (highest) block height in the bucket.
-    pub last_height: i64,
+    pub transactions: i64,
 }
 
 /// Read the last `limit` daily buckets, newest-first.
 pub async fn daily(pool: &PgPool, limit: i64) -> DbResult<Vec<StatsDailyRow>> {
     let rows = sqlx::query(
-        "SELECT day_bucket, block_count, tx_count, gas_used, first_height, last_height \
+        "SELECT to_char(to_timestamp(day_bucket * 86400) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS date, \
+                block_count AS blocks, \
+                tx_count AS transactions \
          FROM stats_daily_mv ORDER BY day_bucket DESC LIMIT $1",
     )
     .bind(limit)
@@ -32,22 +32,28 @@ pub async fn daily(pool: &PgPool, limit: i64) -> DbResult<Vec<StatsDailyRow>> {
     rows.into_iter()
         .map(|r| {
             Ok(StatsDailyRow {
-                day_bucket: r.try_get("day_bucket")?,
-                block_count: r.try_get("block_count")?,
-                tx_count: r.try_get("tx_count")?,
-                gas_used: r.try_get("gas_used")?,
-                first_height: r.try_get("first_height")?,
-                last_height: r.try_get("last_height")?,
+                date: r.try_get("date")?,
+                blocks: r.try_get("blocks")?,
+                transactions: r.try_get("transactions")?,
             })
         })
         .collect::<Result<_, sqlx::Error>>()
         .map_err(Into::into)
 }
 
-/// Trigger a CONCURRENTLY refresh of the MV. Called by the route on cache
-/// miss for the most-recent bucket, OR by the operator on demand.
+/// CONCURRENTLY refresh — does not lock out reads, but Postgres rejects it on
+/// a never-populated MV. Use for the periodic refresh once populated.
 pub async fn refresh(pool: &PgPool) -> DbResult<()> {
     sqlx::query("REFRESH MATERIALIZED VIEW CONCURRENTLY stats_daily_mv")
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Plain (blocking) refresh — the only form that works on a never-populated
+/// MV. Run once at startup before switching to `refresh` on the interval.
+pub async fn refresh_full(pool: &PgPool) -> DbResult<()> {
+    sqlx::query("REFRESH MATERIALIZED VIEW stats_daily_mv")
         .execute(pool)
         .await?;
     Ok(())

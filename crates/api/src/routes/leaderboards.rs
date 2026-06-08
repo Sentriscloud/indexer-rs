@@ -101,8 +101,13 @@ async fn whale_transfers(
 }
 
 /// Router for `/accounts/active` + `/whale/transfers`.
+///
+/// `/whale/tx` is an alias for `/whale/transfers` — the legacy TS indexer (and
+/// the explorer frontend wired to it) names this path `/whale/tx`; serve both
+/// so the frontend is indexer-agnostic.
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/accounts/active", get(accounts_active))
         .route("/whale/transfers", get(whale_transfers))
+        .route("/whale/tx", get(whale_transfers))
 }
