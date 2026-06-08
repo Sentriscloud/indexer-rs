@@ -52,6 +52,10 @@ ignore = [
     # restructures sqlx-macros-core to not list inactive backends. Audit
     # 2026-05-13.
     "RUSTSEC-2023-0071",
+    # `proc-macro-error2` is unmaintained (author archived the repo); pulled
+    # transitively by macro/derive crates in the alloy ecosystem. Maintenance-
+    # status advisory only — no vulnerability. Remove when the dep tree drops it.
+    "RUSTSEC-2026-0173",
 ]
 
 [sources]
