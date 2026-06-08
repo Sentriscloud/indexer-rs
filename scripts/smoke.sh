@@ -153,7 +153,10 @@ v=$(curl -fsS "$API_BASE/tx/0xtxcccc00000000000000000000000000000000000000000000
 [[ "$v" == "0xfeedfacefeedfacefeedfacefeedfacefeedface" ]] || fail "/tx.from rename broken (got '$v')"
 v=$(curl -fsS "$API_BASE/tx/0xtxcccc00000000000000000000000000000000000000000000000000000000cc" | jq -r '.logs | length')
 [[ "$v" == "2" ]] || fail "/tx logs count != 2 (got $v)"
-ok "/tx/:hash (from_addr->from, logs[2])"
+# block_timestamp joined from blocks (tx cccc is in block 2 @ ts 1700086400)
+v=$(curl -fsS "$API_BASE/tx/0xtxcccc00000000000000000000000000000000000000000000000000000000cc" | jq -r '.block_timestamp')
+[[ "$v" == "1700086400" ]] || fail "/tx block_timestamp != 1700086400 (got '$v')"
+ok "/tx/:hash (from_addr->from, logs[2], block_timestamp)"
 
 # /tx/<unknown> -> 404
 code=$(curl -s -o /dev/null -w '%{http_code}' "$API_BASE/tx/0xdeadbeef")
